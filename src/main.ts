@@ -3,6 +3,7 @@ import { Viewport } from './viewport';
 import { snapPoint, type SnapResult } from './snap';
 import { readTheme, render, type Theme } from './renderer';
 import { toDxf } from './export/dxf';
+import { zipStore } from './export/zip';
 
 const STORAGE_KEY = 'kenchiku-cad:drawing';
 
@@ -12,6 +13,9 @@ const statusEl = document.getElementById('status')!;
 const gridSelect = document.getElementById('grid') as HTMLSelectElement;
 
 const view = new Viewport();
+let isSample = false;
+let flashMsg = '';
+let flashTimer = 0;
 let drawing: Drawing = loadDrawing();
 let history: Entity[][] = [];
 let grid = Number(gridSelect.value);
@@ -34,7 +38,23 @@ function loadDrawing(): Drawing {
   } catch {
     /* 読めなければ新規 */
   }
-  return createDrawing();
+  return sampleDrawing();
+}
+
+/** 初回はサンプル（6畳 3640×2730 の外形）を表示して、何ができるか分かるようにする */
+function sampleDrawing(): Drawing {
+  const d = createDrawing();
+  const pts = [
+    { x: 0, y: 0 },
+    { x: 3640, y: 0 },
+    { x: 3640, y: 2730 },
+    { x: 0, y: 2730 },
+  ];
+  for (let i = 0; i < 4; i++) {
+    d.entities.push({ id: newId(), kind: 'line', layer: '0', a: pts[i], b: pts[(i + 1) % 4] });
+  }
+  isSample = true;
+  return d;
 }
 
 function saveDrawing() {
@@ -46,6 +66,7 @@ function saveDrawing() {
 }
 
 function commit(mutator: () => void) {
+  isSample = false;
   history.push(drawing.entities.map((e) => structuredClone(e)));
   if (history.length > 200) history.shift();
   mutator();
@@ -100,7 +121,26 @@ function fitView() {
   view.fit(min, max, cssW, cssH);
 }
 
+function flash(msg: string) {
+  flashMsg = msg;
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => {
+    flashMsg = '';
+    updateStatus();
+  }, 3500);
+  updateStatus();
+}
+
 function updateStatus() {
+  statusEl.classList.toggle('flash', !!flashMsg);
+  if (flashMsg) {
+    statusEl.textContent = flashMsg;
+    return;
+  }
+  if (isSample && !pending) {
+    statusEl.textContent = 'サンプル（6畳の外形）を表示中。タップで線を引けます';
+    return;
+  }
   const parts: string[] = [];
   if (cursor) {
     parts.push(`X ${fmt(cursor.point.x)}  Y ${fmt(cursor.point.y)}`);
@@ -291,25 +331,75 @@ const actions: Record<string, () => void> = {
     requestRender();
   },
   clear() {
+    // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
     if (drawing.entities.length === 0) return;
-    if (!confirm('すべての線を消去しますか？（「戻す」で元に戻せます）')) return;
+    if (!clearArmed) {
+      clearArmed = true;
+      clearBtn.textContent = 'もう一度で消去';
+      clearBtn.classList.add('danger');
+      clearTimer = window.setTimeout(disarmClear, 3000);
+      return;
+    }
+    disarmClear();
     commit(() => {
       drawing.entities = [];
     });
     pending = null;
+    flash('全部消しました（「戻す」で元に戻せます）');
   },
   exportDxf() {
-    const blob = new Blob([toDxf(drawing)], { type: 'application/dxf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `drawing-${timestamp()}.dxf`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    void exportDxf();
   },
 };
+
+const clearBtn = document.getElementById('btn-clear') as HTMLButtonElement;
+let clearArmed = false;
+let clearTimer = 0;
+function disarmClear() {
+  clearArmed = false;
+  clearTimeout(clearTimer);
+  clearBtn.textContent = '全消去';
+  clearBtn.classList.remove('danger');
+}
+
+type DownloadsApi = { save(req: { filename: string; data: Blob | Uint8Array | string }): Promise<unknown> };
+type ClaudeHost = { use(name: string): Promise<unknown> };
+
+async function exportDxf() {
+  const name = `drawing-${timestamp()}`;
+  const text = toDxf(drawing);
+  const host = (window as unknown as { claude?: ClaudeHost }).claude;
+
+  if (host?.use) {
+    // claude.ai の公開ページ: .dxf は直接保存できないので zip に包む
+    const downloads = (await host.use('downloads')) as DownloadsApi | null;
+    if (!downloads) {
+      flash('この画面では保存できません。PCのブラウザで開いてください');
+      return;
+    }
+    const zip = zipStore([{ name: `${name}.dxf`, data: new TextEncoder().encode(text) }]);
+    try {
+      await downloads.save({ filename: `${name}.zip`, data: zip });
+      flash('保存しました（zipを展開するとDXFが入っています）');
+    } catch (e) {
+      const code = (e as { code?: string })?.code;
+      if (code !== 'declined') flash('保存できませんでした。少し待ってからもう一度試してください');
+    }
+    return;
+  }
+
+  // 通常のブラウザ（npm run dev など）
+  const blob = new Blob([text], { type: 'application/dxf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}.dxf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  flash(`${name}.dxf を保存しました`);
+}
 
 function timestamp() {
   const d = new Date();
