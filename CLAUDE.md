@@ -68,7 +68,7 @@ npm run build      # 型チェック＋ビルド
 
 ## 次にやること
 
-1. 実機確認: PC ブラウザとタブレットで `npm run dev` を開き、作図→DXF保存→Jw_cad で開けるか確認
+1. 実機確認: 修正後の DXF が Jw_cad で開けるか確認中（test_A=自前出力 / test_B=ezdxf出力 で比較）
 2. 選択・削除ツール（線をタップで選択、削除）
 3. 直交モード（水平・垂直に固定）と数値入力（長さを打ち込む）
 4. Phase 2 の設計: `Wall { a, b, thickness, layer }` と `GridLine` をモデルに追加
@@ -76,3 +76,5 @@ npm run build      # 型チェック＋ビルド
 ## メモ・決定事項
 
 - 2026-10-14: プロジェクト開始。Web（Vite+TS+Canvas）で PC＋タブレット対応に決定。DWG は ODA File Converter 経由。
+- 2026-10-14: 最小構成のDXF（HEADERに$ACADVERのみ）は Jw_cad で「図形がありません」になった。
+  AutoCAD R12 風に修正（コード右寄せ3桁、$EXTMIN/$EXTMAX等、VPORT/STYLE/VIEW/UCS、空BLOCKS、R12にない$MEASUREMENTを削除）。Jw_cadでの確認待ち。

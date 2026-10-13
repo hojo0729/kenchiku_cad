@@ -1,9 +1,17 @@
-import type { Drawing } from '../model';
+import type { Drawing, Vec2 } from '../model';
 
 /**
  * DXF R12 (AC1009) ASCII 形式で書き出す。
  * R12 を選んでいる理由: Jw_cad・AutoCAD・ODA File Converter など
  * ほぼ全てのCADが読める最も互換性の高い版のため。
+ *
+ * Jw_cad は最小構成の DXF（HEADER に $ACADVER だけ等）を読めず
+ * 「図形がありません」になったため、AutoCAD R12 が出力する形に寄せている:
+ *  - グループコードは右寄せ3桁（"  0", " 10"）
+ *  - HEADER に $INSBASE / $EXTMIN / $EXTMAX / $LIMMIN / $LIMMAX
+ *  - TABLES に VPORT / LTYPE / LAYER / STYLE / VIEW / UCS
+ *  - 空の BLOCKS セクション
+ *  - R12 に存在しない変数（$MEASUREMENT 等）は書かない
  *
  * 注意: R12 では日本語の画層名/文字は Shift_JIS が前提。
  * 今はASCIIのみ想定（日本語対応は文字実装時に Shift_JIS エンコードを追加）。
@@ -14,23 +22,86 @@ export function toDxf(drawing: Drawing): string {
     let text: string;
     if (typeof value === 'string') text = value;
     else if (isFloatCode(code)) text = num(value);
-    else text = String(Math.round(value));
-    out.push(String(code), text);
+    else text = String(Math.round(value)).padStart(6, ' ');
+    out.push(String(code).padStart(3, ' '), text);
+  };
+  const point = (base: number, p: Vec2) => {
+    g(base, p.x);
+    g(base + 10, p.y);
+    g(base + 20, 0);
   };
 
-  // HEADER
+  const { min, max } = extents(drawing);
+
+  // ---------- HEADER ----------
   g(0, 'SECTION');
   g(2, 'HEADER');
   g(9, '$ACADVER');
   g(1, 'AC1009');
-  g(9, '$MEASUREMENT');
-  g(70, 1); // メートル法
+  g(9, '$INSBASE');
+  point(10, { x: 0, y: 0 });
+  g(9, '$EXTMIN');
+  point(10, min);
+  g(9, '$EXTMAX');
+  point(10, max);
+  g(9, '$LIMMIN');
+  g(10, min.x);
+  g(20, min.y);
+  g(9, '$LIMMAX');
+  g(10, max.x);
+  g(20, max.y);
   g(0, 'ENDSEC');
 
-  // TABLES
+  // ---------- TABLES ----------
   g(0, 'SECTION');
   g(2, 'TABLES');
 
+  // VPORT（*ACTIVE を図面範囲に合わせる）
+  const cx = (min.x + max.x) / 2;
+  const cy = (min.y + max.y) / 2;
+  const height = Math.max(max.y - min.y, (max.x - min.x) / 1.5, 1) * 1.1;
+  g(0, 'TABLE');
+  g(2, 'VPORT');
+  g(70, 1);
+  g(0, 'VPORT');
+  g(2, '*ACTIVE');
+  g(70, 0);
+  g(10, 0);
+  g(20, 0);
+  g(11, 1);
+  g(21, 1);
+  g(12, cx);
+  g(22, cy);
+  g(13, 0);
+  g(23, 0);
+  g(14, 1);
+  g(24, 1);
+  g(15, 0);
+  g(25, 0);
+  g(16, 0);
+  g(26, 0);
+  g(36, 1);
+  g(17, 0);
+  g(27, 0);
+  g(37, 0);
+  g(40, height);
+  g(41, 1.5);
+  g(42, 50);
+  g(43, 0);
+  g(44, 0);
+  g(50, 0);
+  g(51, 0);
+  g(71, 0);
+  g(72, 100);
+  g(73, 1);
+  g(74, 1);
+  g(75, 0);
+  g(76, 0);
+  g(77, 0);
+  g(78, 0);
+  g(0, 'ENDTAB');
+
+  // LTYPE
   g(0, 'TABLE');
   g(2, 'LTYPE');
   g(70, 1);
@@ -43,6 +114,7 @@ export function toDxf(drawing: Drawing): string {
   g(40, 0);
   g(0, 'ENDTAB');
 
+  // LAYER
   const layerNames = new Set(drawing.layers.map((l) => l.name));
   const layers = [...drawing.layers];
   for (const e of drawing.entities) {
@@ -62,9 +134,39 @@ export function toDxf(drawing: Drawing): string {
     g(6, 'CONTINUOUS');
   }
   g(0, 'ENDTAB');
+
+  // STYLE
+  g(0, 'TABLE');
+  g(2, 'STYLE');
+  g(70, 1);
+  g(0, 'STYLE');
+  g(2, 'STANDARD');
+  g(70, 0);
+  g(40, 0);
+  g(41, 1);
+  g(50, 0);
+  g(71, 0);
+  g(42, 2.5);
+  g(3, 'txt');
+  g(4, '');
+  g(0, 'ENDTAB');
+
+  // VIEW / UCS（空）
+  for (const name of ['VIEW', 'UCS']) {
+    g(0, 'TABLE');
+    g(2, name);
+    g(70, 0);
+    g(0, 'ENDTAB');
+  }
+
   g(0, 'ENDSEC');
 
-  // ENTITIES
+  // ---------- BLOCKS（空） ----------
+  g(0, 'SECTION');
+  g(2, 'BLOCKS');
+  g(0, 'ENDSEC');
+
+  // ---------- ENTITIES ----------
   g(0, 'SECTION');
   g(2, 'ENTITIES');
   for (const e of drawing.entities) {
@@ -72,12 +174,8 @@ export function toDxf(drawing: Drawing): string {
       case 'line':
         g(0, 'LINE');
         g(8, e.layer);
-        g(10, e.a.x);
-        g(20, e.a.y);
-        g(30, 0);
-        g(11, e.b.x);
-        g(21, e.b.y);
-        g(31, 0);
+        point(10, e.a);
+        point(11, e.b);
         break;
     }
   }
@@ -86,6 +184,26 @@ export function toDxf(drawing: Drawing): string {
 
   // DXFはCRLFが最も無難
   return out.join('\r\n') + '\r\n';
+}
+
+/** 図形全体の範囲。空なら原点付近の 10m 四方 */
+export function extents(drawing: Drawing): { min: Vec2; max: Vec2 } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const e of drawing.entities) {
+    if (e.kind === 'line') {
+      for (const p of [e.a, e.b]) {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+      }
+    }
+  }
+  if (!Number.isFinite(minX)) return { min: { x: 0, y: 0 }, max: { x: 10000, y: 10000 } };
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
 }
 
 /** 実数を書くべきグループコードか（それ以外の数値コードは整数で書く必要がある） */
