@@ -60,6 +60,20 @@ describe('toDxf', () => {
     ]);
   });
 
+  it('$LIMMIN/$LIMMAX は 用紙×縮尺 の範囲を図形中心に置く（既定 A3・1/100）', () => {
+    const p = pairs(toDxf(sample()));
+    const at = (name: string) => {
+      const i = p.findIndex(([, v]) => v === name);
+      return [Number(p[i + 1][1]), Number(p[i + 2][1])];
+    };
+    const [x0, y0] = at('$LIMMIN');
+    const [x1, y1] = at('$LIMMAX');
+    expect(x1 - x0).toBeCloseTo(42000);
+    expect(y1 - y0).toBeCloseTo(29700);
+    expect((x0 + x1) / 2).toBeCloseTo(455);
+    expect((y0 + y1) / 2).toBeCloseTo(227.75);
+  });
+
   it('整数コードに小数を書かず、未登録の画層も LAYER に追加する', () => {
     const d = createDrawing();
     d.entities.push({ id: '1', kind: 'line', layer: 'WALL', a: { x: -1.25, y: 3 }, b: { x: 2, y: -0 } });

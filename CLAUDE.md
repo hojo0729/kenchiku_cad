@@ -77,4 +77,6 @@ npm run build      # 型チェック＋ビルド
 
 - 2026-10-14: プロジェクト開始。Web（Vite+TS+Canvas）で PC＋タブレット対応に決定。DWG は ODA File Converter 経由。
 - 2026-10-14: 最小構成のDXF（HEADERに$ACADVERのみ）は Jw_cad で「図形がありません」になった。
-  AutoCAD R12 風に修正（コード右寄せ3桁、$EXTMIN/$EXTMAX等、VPORT/STYLE/VIEW/UCS、空BLOCKS、R12にない$MEASUREMENTを削除）。Jw_cadでの確認待ち。
+  AutoCAD R12 風に修正（コード右寄せ3桁、$EXTMIN/$EXTMAX等、VPORT/STYLE/VIEW/UCS、空BLOCKS、R12にない$MEASUREMENTを削除）→ Jw_cad で読めた。
+- 2026-10-14: Jw_cad は $LIMMIN/$LIMMAX から縮尺を決める（図形範囲そのままだと S=1/4 で開いた）。
+  用紙(既定A3)×縮尺(既定1/100)の範囲を図形中心に書くよう変更。Jw_cad で 1/100 になるか確認待ち（test_C）。

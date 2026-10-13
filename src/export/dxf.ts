@@ -16,7 +16,21 @@ import type { Drawing, Vec2 } from '../model';
  * 注意: R12 では日本語の画層名/文字は Shift_JIS が前提。
  * 今はASCIIのみ想定（日本語対応は文字実装時に Shift_JIS エンコードを追加）。
  */
-export function toDxf(drawing: Drawing): string {
+export type DxfOptions = {
+  /** 用紙サイズ(mm)。既定は A3 横 */
+  paper?: { width: number; height: number };
+  /** 縮尺の分母。既定は 100（1/100） */
+  scale?: number;
+};
+
+/**
+ * Jw_cad は DXF を開くとき $LIMMIN/$LIMMAX（図面の用紙範囲）から縮尺を決めるため、
+ * 用紙サイズ × 縮尺 の範囲を図形の中心に合わせて書き込む。
+ * （図形範囲そのままを書くと 1/4 などの半端な縮尺で開かれた）
+ */
+export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
+  const paper = options.paper ?? { width: 420, height: 297 };
+  const scale = options.scale ?? 100;
   const out: string[] = [];
   const g = (code: number, value: string | number) => {
     let text: string;
@@ -44,12 +58,16 @@ export function toDxf(drawing: Drawing): string {
   point(10, min);
   g(9, '$EXTMAX');
   point(10, max);
+  const lw = paper.width * scale;
+  const lh = paper.height * scale;
+  const lcx = (min.x + max.x) / 2;
+  const lcy = (min.y + max.y) / 2;
   g(9, '$LIMMIN');
-  g(10, min.x);
-  g(20, min.y);
+  g(10, lcx - lw / 2);
+  g(20, lcy - lh / 2);
   g(9, '$LIMMAX');
-  g(10, max.x);
-  g(20, max.y);
+  g(10, lcx + lw / 2);
+  g(20, lcy + lh / 2);
   g(0, 'ENDSEC');
 
   // ---------- TABLES ----------
