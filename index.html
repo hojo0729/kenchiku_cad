@@ -24,6 +24,17 @@
           <button id="menu-dxf" data-action="exportDxf" role="menuitem">
             <span class="menu-title">保存（DXF）</span><span class="menu-sub">Jw_cad で開ける。このアプリで開けば続きを編集できる</span>
           </button>
+          <div class="menu-row">
+            <label for="print-paper" class="menu-title">用紙（PDF）</label>
+            <select id="print-paper">
+              <option value="A3" selected>A3 横</option>
+              <option value="A2">A2 横</option>
+              <option value="A1">A1 横</option>
+            </select>
+          </div>
+          <button id="menu-pdf" data-action="exportPdf" role="menuitem">
+            <span class="menu-title">PDFで保存（図枠付き）</span><span class="menu-sub">印刷用。図面の縮尺で用紙に配置。用紙に入らないときは止めます</span>
+          </button>
           <button id="menu-open" data-action="openFile" role="menuitem">
             <span class="menu-title">開く</span><span class="menu-sub">このアプリで保存した DXF（zip のままでも可）</span>
           </button>

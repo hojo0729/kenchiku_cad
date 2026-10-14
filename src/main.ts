@@ -14,6 +14,8 @@ import { loadUnderlay, saveUnderlay, underlayLayers, underlayCurves, underlayExt
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
 import { toDxfBytes } from './export/dxf';
 import { zipStore } from './export/zip';
+import { buildPdf } from './export/pdf';
+import { PAPERS, drawSheet, sheetLayout, toGray, type PaperSize } from './export/sheet';
 
 const STORAGE_KEY = 'kenchiku-cad:drawing';
 
@@ -654,6 +656,9 @@ const actions: Record<string, () => void> = {
     setMenu(false);
     openInput.click();
   },
+  exportPdf() {
+    void exportPdf();
+  },
   gridPanel() {
     syncGridForm();
     showSheet(sheet);
@@ -773,6 +778,88 @@ function replaceDrawing() {
   saveDrawing();
   fitView();
   requestRender();
+}
+
+// ---------- PDF（印刷用・図枠付き） ----------
+
+const printPaperSelect = document.getElementById('print-paper') as HTMLSelectElement;
+
+async function exportPdf() {
+  const paper = printPaperSelect.value as PaperSize;
+  const prims = ownPrims();
+  const layout = sheetLayout(paper, drawing.scale, primExtents(prims));
+  if (!layout.fits) {
+    flash(`図面が${paper}に入りません。用紙を大きくするか、縮尺を変えてください（そのまま出すと外側が切れるので止めました）`);
+    return;
+  }
+  flash('PDFを作っています…');
+  // 表示が先に出るように、少し待ってから重い処理をする
+  await new Promise((r) => setTimeout(r, 50));
+  const canvas = document.createElement('canvas');
+  canvas.width = layout.pxW;
+  canvas.height = layout.pxH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    flash('この画面ではPDFを作れません');
+    return;
+  }
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  const date = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  drawSheet(ctx, layout, prims, { title: '躯体図', scale: drawing.scale, date }, drawing.scale);
+  const img = ctx.getImageData(0, 0, layout.pxW, layout.pxH);
+  const gray = toGray(img.data, layout.pxW, layout.pxH);
+  canvas.width = 0;
+  canvas.height = 0;
+  const size = PAPERS[paper];
+  const pdf = await buildPdf({
+    widthPt: (size.w / 25.4) * 72,
+    heightPt: (size.h / 25.4) * 72,
+    image: { width: layout.pxW, height: layout.pxH, gray },
+    title: `躯体図 ${paper} 1-${drawing.scale}`,
+  });
+  await saveFile(`${timestamp()}-${paper}-1-${drawing.scale}.pdf`, pdf, 'application/pdf');
+}
+
+/** ファイルを保存する（公開ページでは downloads。PDF は許可された拡張子なのでそのまま保存、だめなら zip） */
+async function saveFile(name: string, bytes: Uint8Array, mime: string) {
+  const host = (window as unknown as { claude?: ClaudeHost }).claude;
+  if (host?.use) {
+    const downloads = (await host.use('downloads')) as DownloadsApi | null;
+    if (!downloads) {
+      flash(APP_HINT);
+      return;
+    }
+    try {
+      await downloads.save({ filename: name, data: bytes });
+      flash(`${name} を保存しました`);
+    } catch (e) {
+      const code = (e as { code?: string })?.code ?? 'unknown';
+      if (code === 'declined') return;
+      if (code === 'rejected_extension' || code === 'extension_not_enabled') {
+        try {
+          await downloads.save({ filename: name.replace(/\.pdf$/, '') + '.zip', data: zipStore([{ name, data: bytes }]) });
+          flash('zipで保存しました（展開するとPDFが入っています）');
+        } catch {
+          flash(`保存失敗（${code}）`);
+        }
+      } else if (code === 'rate_limited') {
+        flash('保存の確認がまだ開いています。少し待ってからもう一度試してください');
+      } else {
+        flash(`保存失敗（${code}）`);
+      }
+    }
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  flash(`${name} を保存しました`);
 }
 
 function timestamp() {
