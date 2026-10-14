@@ -1,5 +1,6 @@
 import type { Drawing, Layer, Vec2 } from '../model';
 import { encodeShiftJis } from './sjis';
+import { embedLines } from './native';
 import { centerPattern, decompose, hiddenPattern, primExtents, type Prim } from '../arch/primitives';
 
 /**
@@ -26,6 +27,8 @@ export type DxfOptions = {
   paper?: { width: number; height: number };
   /** 縮尺の分母。既定は図面の縮尺 */
   scale?: number;
+  /** EOF の後ろに部材データを埋め込む（toDxfBytes の既定は true） */
+  embed?: boolean;
 };
 
 /**
@@ -256,6 +259,9 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(0, 'ENDSEC');
   g(0, 'EOF');
 
+  // EOF の後ろに部材データ（このアプリで開き直して編集を続けるため。他のCADは読まない）
+  if (options.embed) out.push(...embedLines(drawing));
+
   // DXFはCRLFが最も無難
   return out.join('\r\n') + '\r\n';
 }
@@ -291,5 +297,5 @@ function num(v: number): string {
 
 /** ファイルに書くバイト列（日本語は Shift_JIS） */
 export function toDxfBytes(drawing: Drawing, options: DxfOptions = {}): Uint8Array<ArrayBuffer> {
-  return encodeShiftJis(toDxf(drawing, options));
+  return encodeShiftJis(toDxf(drawing, { embed: true, ...options }));
 }

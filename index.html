@@ -19,8 +19,12 @@
             <span class="menu-title">下敷き</span><span class="menu-sub">設計図のDXFを読み込む・位置合わせ</span>
           </button>
           <button id="menu-dxf" data-action="exportDxf" role="menuitem">
-            <span class="menu-title">DXFで保存</span><span class="menu-sub">描いた図面（通り芯・柱・壁・梁・線）を保存</span>
+            <span class="menu-title">保存（DXF）</span><span class="menu-sub">Jw_cad で開ける。このアプリで開けば続きを編集できる</span>
           </button>
+          <button id="menu-open" data-action="openFile" role="menuitem">
+            <span class="menu-title">開く</span><span class="menu-sub">このアプリで保存した DXF（zip のままでも可）</span>
+          </button>
+          <input id="open-file" class="visually-hidden" type="file" tabindex="-1" aria-hidden="true" />
           <div class="menu-row">
             <label for="grid" class="menu-title">グリッド</label>
             <select id="grid">

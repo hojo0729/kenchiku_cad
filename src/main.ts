@@ -7,7 +7,8 @@ import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumn
 import { detectGrid, toSpans } from './arch/grid-detect';
 import { beamRect, gridSpans, nextBeamMark, nextWallMark, openingRange, spanName, wallName, wallRect, wallsInRange, type Rect } from './arch/wall';
 import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
-import { readDxf } from './import/dxf-read';
+import { decodeDxf, readDxf } from './import/dxf-read';
+import { drawingFromJson, extractEmbedded, isZip, unzipFirst } from './export/native';
 import { loadUnderlay, saveUnderlay, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
 import { toDxfBytes } from './export/dxf';
@@ -101,6 +102,13 @@ function sampleDrawing(): Drawing {
   for (let i = 0; i < 3; i++) d.beams.push({ id: newId(), typeId: 'bt1', axis: 'y', line: 1, from: i, to: i + 1, offset: null });
   isSample = true;
   return d;
+}
+
+// ブラウザに「この保存データを勝手に消さないで」と頼む（効くかはブラウザ次第。Safari は使わない日が続くと消すことがある）
+try {
+  void navigator.storage?.persist?.().catch(() => {});
+} catch {
+  /* 無い環境では何もしない */
 }
 
 function saveDrawing() {
@@ -634,6 +642,10 @@ const actions: Record<string, () => void> = {
   exportDxf() {
     void exportDxf();
   },
+  openFile() {
+    setMenu(false);
+    openInput.click();
+  },
   gridPanel() {
     syncGridForm();
     showSheet(sheet);
@@ -673,7 +685,7 @@ async function exportDxf() {
     const zip = zipStore([{ name: `${name}.dxf`, data: bytes }]);
     try {
       await downloads.save({ filename: `${name}.zip`, data: zip });
-      flash('保存しました（zipを展開するとDXFが入っています）');
+      flash('保存しました（zipを展開するとDXF。「開く」ならzipのままで続きを編集できます）');
     } catch (e) {
       const code = (e as { code?: string })?.code;
       if (code !== 'declined') flash('保存できませんでした。少し待ってからもう一度試してください');
@@ -692,6 +704,54 @@ async function exportDxf() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   flash(`${name}.dxf を保存しました`);
+}
+
+// ---------- 開く（このアプリで保存した DXF） ----------
+
+const openInput = document.getElementById('open-file') as HTMLInputElement;
+
+openInput.addEventListener('change', async () => {
+  const file = openInput.files?.[0];
+  openInput.value = '';
+  if (!file) return;
+  try {
+    let bytes: Uint8Array = new Uint8Array(await file.arrayBuffer());
+    let name = file.name;
+    if (isZip(bytes)) {
+      const inner = unzipFirst(bytes);
+      if (!inner) {
+        flash('この zip は読めませんでした。展開してから中の DXF を選んでください');
+        return;
+      }
+      bytes = inner.data;
+      name = inner.name;
+    }
+    const opened = /\.json$/i.test(name) ? drawingFromJson(new TextDecoder().decode(bytes)) : extractEmbedded(decodeDxf(bytes).text);
+    if (!opened) {
+      flash('部材データが入っていないファイルです。設計図などは「下敷き」から読み込んでください');
+      return;
+    }
+    history.push(structuredClone(drawing));
+    drawing = opened;
+    isSample = false;
+    replaceDrawing();
+    flash(`${name} を開きました（「戻す」で前の図面に戻せます）`);
+  } catch {
+    flash('ファイルを読めませんでした');
+  }
+});
+
+/** drawing を丸ごと差し替えたあとに、パネルと表示を合わせる */
+function replaceDrawing() {
+  if (!drawing.columnTypes.some((t) => t.id === currentTypeId)) currentTypeId = drawing.columnTypes[0].id;
+  if (!wallPanel.sheet.hidden) wallPanel.render();
+  if (!beamPanel.sheet.hidden) beamPanel.render();
+  if (!colSheet.hidden) renderColumnTypes();
+  syncGridForm();
+  pending = null;
+  saveDrawing();
+  fitView();
+  requestRender();
 }
 
 function timestamp() {
@@ -1283,6 +1343,9 @@ ulFile.addEventListener('change', async () => {
     syncUnderlayForm();
 
     const notes: string[] = [...result.warnings];
+    if (extractEmbedded(decodeDxf(new Uint8Array(await file.arrayBuffer())).text)) {
+      notes.push('このファイルはこのアプリで保存した図面です。続きを編集するならメニューの「開く」から開いてください');
+    }
     const skipped = Object.entries(result.stats.skipped)
       .filter(([type]) => type !== 'POINT')
       .map(([type, n]) => `${type} ${n}`);
