@@ -1,16 +1,16 @@
-import { createDrawing, distance, LAYER_DIM, newId, normalizeDrawing, type Drawing, type Vec2 } from './model';
+import { createDrawing, distance, LAYER_DIM, newId, normalizeDrawing, type Beam, type BeamType, type Drawing, type Vec2, type Wall, type WallType } from './model';
 import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Segment, type SnapResult } from './snap';
-import { centerPattern, decompose, primExtents } from './arch/primitives';
+import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
-import { gridSpans, nextWallMark, wallName, wallRect, wallsInRange } from './arch/wall';
+import { beamRect, gridSpans, nextBeamMark, nextWallMark, openingRange, spanName, wallName, wallRect, wallsInRange, type Rect } from './arch/wall';
 import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
 import { readDxf } from './import/dxf-read';
 import { loadUnderlay, saveUnderlay, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
-import { toDxf } from './export/dxf';
+import { toDxfBytes } from './export/dxf';
 import { zipStore } from './export/zip';
 
 const STORAGE_KEY = 'kenchiku-cad:drawing';
@@ -28,7 +28,7 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'wall' | 'align' | 'measure' | 'erase' | 'offset';
+type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
@@ -41,7 +41,6 @@ let underlay: Underlay | null = loadUnderlay();
 /** 位置合わせで選んだ下敷き側の点 */
 let alignFrom: Vec2 | null = null;
 let currentTypeId = drawing.columnTypes[0].id;
-let currentWallTypeId = (drawing.wallTypes.find((t) => t.mark === 'W18') ?? drawing.wallTypes[0]).id;
 let cursor: SnapResult | null = null;
 let theme: Theme = readTheme();
 let cssW = 0;
@@ -92,6 +91,14 @@ function sampleDrawing(): Drawing {
     outer('x', 3, i, 30);
   }
   d.walls.push({ id: newId(), typeId: 'wt15', axis: 'y', line: 1, from: 0, to: 1, offset: null });
+  // 開口: Y1通り X2〜X3 に出入口 1800、Y3通り X1〜X2 に窓 2400
+  const y1mid = d.walls.find((w) => w.axis === 'y' && w.line === 0 && w.from === 1)!;
+  const y3left = d.walls.find((w) => w.axis === 'y' && w.line === 2 && w.from === 0)!;
+  d.openings.push({ id: newId(), wallId: y1mid.id, start: 2700, width: 1800 });
+  d.openings.push({ id: newId(), wallId: y3left.id, start: 1800, width: 2400 });
+  // 梁: 内側の通り（X2・X3 と Y2）に G1 400×800
+  for (const xi of [1, 2]) for (let i = 0; i < 2; i++) d.beams.push({ id: newId(), typeId: 'bt1', axis: 'x', line: xi, from: i, to: i + 1, offset: null });
+  for (let i = 0; i < 3; i++) d.beams.push({ id: newId(), typeId: 'bt1', axis: 'y', line: 1, from: i, to: i + 1, offset: null });
   isSample = true;
   return d;
 }
@@ -109,6 +116,8 @@ function commit(mutator: () => void) {
   history.push(structuredClone(drawing));
   if (history.length > 200) history.shift();
   mutator();
+  // 壁が無くなった開口は消す
+  drawing.openings = drawing.openings.filter((o) => drawing.walls.some((w) => w.id === o.wallId));
   saveDrawing();
   requestRender();
 }
@@ -132,6 +141,7 @@ function frame() {
       view,
       grid,
       centerPattern: centerPattern(drawing.scale),
+      hiddenPattern: hiddenPattern(drawing.scale),
       pending,
       cursor,
       underlay,
@@ -210,7 +220,7 @@ function updateStatus() {
     return;
   }
   if (mode === 'erase') {
-    statusEl.textContent = '消す: 消したい線・柱・壁をタップ（下敷き・通り芯は消えません）';
+    statusEl.textContent = '消す: 線・柱・壁・開口・梁をタップ（下敷き・通り芯は消えません）';
     return;
   }
   if (mode === 'offset') {
@@ -223,11 +233,17 @@ function updateStatus() {
       : '下敷きの点（設計図の通り芯の交点など）をタップ';
     return;
   }
-  if (mode === 'wall') {
-    const t = drawing.wallTypes.find((c) => c.id === currentWallTypeId);
+  if (mode === 'wall' || mode === 'beam') {
+    const panel = mode === 'wall' ? wallPanel : beamPanel;
+    const name = mode === 'wall' ? '壁' : '梁';
+    const t = panel.currentType;
     statusEl.textContent = drawing.grid
-      ? `壁 ${t ? `${t.mark}（厚さ${t.t}）` : ''}: 通り芯の区間をタップで配置／壁をタップで編集`
-      : '壁を置くには、先に「通り芯」を描いてください';
+      ? `${name} ${t ? t.mark : ''}: 通り芯の区間をタップで配置／${name}をタップで編集`
+      : `${name}を置くには、先に「通り芯」を描いてください`;
+    return;
+  }
+  if (mode === 'opening') {
+    statusEl.textContent = `開口 幅${formatDim(opDefaultWidth)}: 壁をタップで配置／開口をタップで変更`;
     return;
   }
   if (mode === 'column') {
@@ -238,7 +254,7 @@ function updateStatus() {
     return;
   }
   if (isSample && !pending) {
-    statusEl.textContent = 'サンプル（通り芯・柱・壁）を表示中。「壁」「柱」で符号の大きさを変えられます';
+    statusEl.textContent = 'サンプル（通り芯・柱・壁・開口・梁）を表示中。各ボタンで符号の大きさを変えられます';
     return;
   }
   const parts: string[] = [];
@@ -488,7 +504,15 @@ function handleTap(screen: Vec2, type: string) {
     return;
   }
   if (mode === 'wall') {
-    wallTap(screen, type);
+    wallPanel.tap(screen, type);
+    return;
+  }
+  if (mode === 'beam') {
+    beamPanel.tap(screen, type);
+    return;
+  }
+  if (mode === 'opening') {
+    openingTap(screen, type);
     return;
   }
   updateCursor(screen, type);
@@ -518,7 +542,23 @@ const actions: Record<string, () => void> = {
   },
   wall() {
     setMode('wall');
-    openWallSheet(null);
+    wallPanel.open(null);
+  },
+  beam() {
+    setMode('beam');
+    beamPanel.open(null);
+  },
+  opening() {
+    openOpeningSheet(null);
+  },
+  openSample() {
+    history.push(structuredClone(drawing));
+    drawing = sampleDrawing();
+    saveDrawing();
+    syncGridForm();
+    fitView();
+    requestRender();
+    flash('サンプルを開きました（「戻す」で前の図面に戻せます）');
   },
   ortho() {
     ortho = !ortho;
@@ -555,8 +595,8 @@ const actions: Record<string, () => void> = {
     if (!prev) return;
     drawing = prev;
     if (!drawing.columnTypes.some((t) => t.id === currentTypeId)) currentTypeId = drawing.columnTypes[0].id;
-    if (!drawing.wallTypes.some((t) => t.id === currentWallTypeId)) currentWallTypeId = drawing.wallTypes[0].id;
-    if (!wallSheet.hidden) renderWallTypes();
+    if (!wallPanel.sheet.hidden) wallPanel.render();
+    if (!beamPanel.sheet.hidden) beamPanel.render();
     syncGridForm();
     if (!colSheet.hidden) renderColumnTypes();
     pending = null;
@@ -569,7 +609,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0 && !drawing.grid && drawing.columns.length === 0 && drawing.walls.length === 0) return;
+    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length) return;
     if (!clearArmed) {
       clearArmed = true;
       clearTitle.textContent = 'もう一度押すと全部消します';
@@ -583,6 +623,7 @@ const actions: Record<string, () => void> = {
       drawing.grid = undefined;
       drawing.columns = [];
       drawing.walls = [];
+      drawing.beams = [];
     });
     syncGridForm();
     pending = null;
@@ -617,7 +658,7 @@ type ClaudeHost = { use(name: string): Promise<unknown> };
 
 async function exportDxf() {
   const name = `drawing-${timestamp()}`;
-  const text = toDxf(drawing);
+  const bytes = toDxfBytes(drawing);
   const host = (window as unknown as { claude?: ClaudeHost }).claude;
 
   if (host?.use) {
@@ -627,7 +668,7 @@ async function exportDxf() {
       flash('この画面では保存できません。PCのブラウザで開いてください');
       return;
     }
-    const zip = zipStore([{ name: `${name}.dxf`, data: new TextEncoder().encode(text) }]);
+    const zip = zipStore([{ name: `${name}.dxf`, data: bytes }]);
     try {
       await downloads.save({ filename: `${name}.zip`, data: zip });
       flash('保存しました（zipを展開するとDXFが入っています）');
@@ -639,7 +680,7 @@ async function exportDxf() {
   }
 
   // 通常のブラウザ（npm run dev など）
-  const blob = new Blob([text], { type: 'application/dxf' });
+  const blob = new Blob([bytes], { type: 'application/dxf' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -668,8 +709,17 @@ function setMenu(open: boolean) {
   if (!open) disarmClear();
 }
 
+const offsetDimsCheck = document.getElementById('menu-offset-dims') as HTMLInputElement;
+offsetDimsCheck.addEventListener('change', () => {
+  commit(() => {
+    drawing.showOffsetDims = offsetDimsCheck.checked;
+  });
+  flash(offsetDimsCheck.checked ? '寄り寸法を表示します' : '寄り寸法を隠しました');
+});
+
 menuBtn.addEventListener('click', () => {
   const open = menuEl.hidden;
+  offsetDimsCheck.checked = drawing.showOffsetDims;
   if (open) showSheet(null);
   setMenu(open);
 });
@@ -703,6 +753,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape' && !menuEl.hidden) {
     setMenu(false);
+    return;
+  }
+  if (e.key === 'Escape' && document.querySelector('.sheet:not([hidden])')) {
+    showSheet(null);
     return;
   }
   if (e.key === 'Escape') actions.endChain();
@@ -775,6 +829,7 @@ document.getElementById('grid-form')!.addEventListener('submit', (e) => {
     // 通り芯が減ったら、無くなった交点の柱も消す
     drawing.columns = drawing.columns.filter((c) => c.xi <= xs.length && c.yi <= ys.length);
     drawing.walls = wallsInRange(drawing.walls, xs.length + 1, ys.length + 1);
+    drawing.beams = wallsInRange(drawing.beams, xs.length + 1, ys.length + 1);
   });
   showSheet(null);
   fitView();
@@ -791,6 +846,7 @@ document.getElementById('grid-remove')!.addEventListener('click', () => {
     drawing.grid = undefined;
     drawing.columns = [];
     drawing.walls = [];
+    drawing.beams = [];
   });
   showSheet(null);
   flash('通り芯を消しました（「戻す」で元に戻せます）');
@@ -801,7 +857,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -1366,10 +1422,16 @@ function eraseTap(screen: Vec2, type: string) {
     flash('線を消しました（「戻す」で元に戻せます）');
     return;
   }
-  const wall = drawing.walls.find((x) => {
-    const rc = wallRect(drawing, x);
-    return rc && w.x >= rc.min.x && w.x <= rc.max.x && w.y >= rc.min.y && w.y <= rc.max.y;
-  });
+  const op = openingAt(w, 0);
+  if (op) {
+    commit(() => {
+      drawing.openings = drawing.openings.filter((x) => x.id !== op.id);
+    });
+    flash('開口を消しました（「戻す」で元に戻せます）');
+    return;
+  }
+  const wall = wallPanel.hit(w) as Wall | undefined;
+  const beam = beamPanel.hit(w) as Beam | undefined;
   if (col) {
     const name = intersectionName(drawing, col.xi, col.yi);
     commit(() => {
@@ -1386,231 +1448,434 @@ function eraseTap(screen: Vec2, type: string) {
     flash(`${name} の壁を消しました（「戻す」で元に戻せます）`);
     return;
   }
-  flash('ここには消せる線・柱・壁がありません（下敷き・通り芯は消えません）');
-}
-
-// ---------- 壁 ----------
-
-const wallSheet = document.getElementById('wall-sheet') as HTMLElement;
-const wallTitle = document.getElementById('wall-title') as HTMLElement;
-const wallTypesEl = document.getElementById('wall-types') as HTMLElement;
-const wallOffset = document.getElementById('wall-offset') as HTMLInputElement;
-const wallMsg = document.getElementById('wall-msg') as HTMLElement;
-const wallOk = document.getElementById('wall-ok') as HTMLButtonElement;
-const wallDelete = document.getElementById('wall-delete') as HTMLButtonElement;
-
-/** 編集中の壁（null なら配置） */
-let wallEditId: string | null = null;
-/** 配置時の寄り（入力のまま） */
-let placeWallOffset = '';
-
-function editingWall() {
-  return wallEditId ? drawing.walls.find((w) => w.id === wallEditId) : undefined;
-}
-
-function openWallSheet(id: string | null) {
-  wallEditId = id;
-  const w = editingWall();
-  wallMsg.textContent = '';
-  if (w) {
-    wallTitle.textContent = `壁（${wallName(drawing, w)}）`;
-    wallOffset.value = w.offset === null ? '' : String(w.offset);
-    wallOk.textContent = '変更を反映';
-    wallDelete.hidden = false;
-  } else {
-    wallTitle.textContent = '壁';
-    wallOffset.value = placeWallOffset;
-    wallOk.textContent = '通り芯の区間をタップして配置';
-    wallDelete.hidden = true;
-  }
-  renderWallTypes();
-  showSheet(wallSheet);
-}
-
-function renderWallTypes() {
-  const w = editingWall();
-  const selectedId = w ? w.typeId : currentWallTypeId;
-  wallTypesEl.replaceChildren();
-  for (const t of drawing.wallTypes) {
-    const count = drawing.walls.filter((x) => x.typeId === t.id).length;
-    const row = document.createElement('div');
-    row.className = 'type-row' + (t.id === selectedId ? ' selected' : '');
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = 'walltype';
-    radio.id = `walltype-${t.id}`;
-    radio.checked = t.id === selectedId;
-    radio.setAttribute('aria-label', `${t.mark} を使う`);
-    radio.addEventListener('change', () => selectWallType(t.id));
-    const mark = textInput(`wallmark-${t.id}`, t.mark, 'mark', '符号');
-    const thick = textInput(`wallt-${t.id}`, String(t.t), 'size', '厚さ');
-    thick.inputMode = 'numeric';
-    const unit = document.createElement('span');
-    unit.className = 'times';
-    unit.textContent = '厚';
-    const cnt = document.createElement('span');
-    cnt.className = 'count';
-    cnt.textContent = `${count}枚`;
-    const apply = () => updateWallType(t.id, mark.value, thick.value);
-    for (const el of [mark, thick]) {
-      el.addEventListener('change', apply);
-      el.addEventListener('focus', () => selectWallType(t.id, false));
-    }
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.textContent = '削除';
-    del.setAttribute('aria-label', `${t.mark} を削除`);
-    del.addEventListener('click', () => deleteWallType(t.id));
-    row.append(radio, mark, unit, thick, cnt, del);
-    wallTypesEl.append(row);
-  }
-}
-
-function selectWallType(id: string, rerender = true) {
-  const w = editingWall();
-  if (w) {
-    if (w.typeId !== id)
-      commit(() => {
-        w.typeId = id;
-      });
-  } else {
-    currentWallTypeId = id;
-  }
-  if (rerender) renderWallTypes();
-  else
-    wallTypesEl.querySelectorAll('.type-row').forEach((row, i) => {
-      const on = drawing.wallTypes[i]?.id === id;
-      row.classList.toggle('selected', on);
-      (row.querySelector('input[type="radio"]') as HTMLInputElement).checked = on;
+  if (beam) {
+    const name = spanName(drawing, beam);
+    commit(() => {
+      drawing.beams = drawing.beams.filter((x) => x.id !== beam.id);
     });
-  requestRender();
+    flash(`${name} の梁を消しました（「戻す」で元に戻せます）`);
+    return;
+  }
+  flash('ここには消せるものがありません（下敷き・通り芯は消えません）');
 }
 
-function updateWallType(id: string, markText: string, tText: string) {
-  const mark = markText.normalize('NFKC').trim();
-  const t = Number(tText.normalize('NFKC'));
-  if (!mark) {
-    wallMsg.textContent = '符号を入力してください（例: W18）';
-    renderWallTypes();
-    return;
-  }
-  if (drawing.wallTypes.some((x) => x.id !== id && x.mark === mark)) {
-    wallMsg.textContent = `符号 ${mark} はもう使われています`;
-    renderWallTypes();
-    return;
-  }
-  if (!(t > 0)) {
-    wallMsg.textContent = '厚さは 0 より大きい数字で入力してください';
-    renderWallTypes();
-    return;
-  }
-  wallMsg.textContent = '';
-  const wt = drawing.wallTypes.find((x) => x.id === id);
-  if (!wt || (wt.mark === mark && wt.t === t)) return;
-  commit(() => {
-    wt.mark = mark;
-    wt.t = t;
-  });
-  const count = drawing.walls.filter((x) => x.typeId === id).length;
-  if (count) flash(`${mark} の壁 ${count}枚を厚さ ${t} に変更しました`);
-  renderWallTypes();
-}
+// ---------- 壁・梁（共通のパネル） ----------
 
-function deleteWallType(id: string) {
-  const wt = drawing.wallTypes.find((x) => x.id === id);
-  if (!wt) return;
-  if (drawing.walls.some((x) => x.typeId === id)) {
-    wallMsg.textContent = `${wt.mark} は図面で使われているので削除できません。先にその壁を消してください`;
-    return;
-  }
-  if (drawing.wallTypes.length === 1) {
-    wallMsg.textContent = '符号は最低1つ必要です';
-    return;
-  }
-  commit(() => {
-    drawing.wallTypes = drawing.wallTypes.filter((x) => x.id !== id);
-  });
-  if (currentWallTypeId === id) currentWallTypeId = drawing.wallTypes[0].id;
-  wallMsg.textContent = '';
-  renderWallTypes();
-}
+type LinearMember = Wall | Beam;
+type MemberType = { id: string; mark: string } & Record<string, unknown>;
 
-document.getElementById('wall-type-add')!.addEventListener('click', () => {
-  const t = { id: newId(), mark: nextWallMark(drawing.wallTypes, 250), t: 250 };
-  commit(() => {
-    drawing.wallTypes.push(t);
-  });
-  selectWallType(t.id);
-});
+type MemberCfg = {
+  /** DOM の id の頭（wall-sheet, wall-types…） */
+  prefix: 'wall' | 'beam';
+  mode: Mode;
+  name: string;
+  unit: string;
+  /** 符号の数値の項目（壁: 厚さ、梁: 幅とせい） */
+  fields: { key: string; label: string; before?: string }[];
+  types(): MemberType[];
+  setTypes(list: MemberType[]): void;
+  list(): LinearMember[];
+  setList(list: LinearMember[]): void;
+  rect(m: LinearMember): Rect | null;
+  describe(t: MemberType): string;
+  newType(types: MemberType[]): MemberType;
+};
 
-document.getElementById('wall-form')!.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const off = parseOffset(wallOffset.value);
-  if (off === undefined) {
-    wallMsg.textContent = '寄りは数字で入力してください（空欄なら振り分け）';
-    return;
+function createMemberPanel(cfg: MemberCfg) {
+  const $ = <T extends HTMLElement>(suffix: string) => document.getElementById(`${cfg.prefix}-${suffix}`) as T;
+  const sheetEl = $<HTMLElement>('sheet');
+  const title = $<HTMLElement>('title');
+  const typesEl = $<HTMLElement>('types');
+  const offsetIn = $<HTMLInputElement>('offset');
+  const msg = $<HTMLElement>('msg');
+  const ok = $<HTMLButtonElement>('ok');
+  const del = $<HTMLButtonElement>('delete');
+
+  let currentTypeId = cfg.types()[0]?.id ?? '';
+  let editId: string | null = null;
+  let placeOffset = '';
+
+  const editing = () => (editId ? cfg.list().find((m) => m.id === editId) : undefined);
+  const typeOf = (id: string) => cfg.types().find((t) => t.id === id);
+
+  function open(id: string | null) {
+    editId = id;
+    const m = editing();
+    msg.textContent = '';
+    if (m) {
+      title.textContent = `${cfg.name}（${spanName(drawing, m)}）`;
+      offsetIn.value = m.offset === null ? '' : String(m.offset);
+      ok.textContent = '変更を反映';
+      del.hidden = false;
+    } else {
+      title.textContent = cfg.name;
+      offsetIn.value = placeOffset;
+      ok.textContent = '通り芯の区間をタップして配置';
+      del.hidden = true;
+    }
+    render();
+    showSheet(sheetEl);
   }
-  const w = editingWall();
-  if (w) {
-    if (w.offset !== off)
-      commit(() => {
-        w.offset = off;
+
+  function render() {
+    if (!cfg.types().some((t) => t.id === currentTypeId)) currentTypeId = cfg.types()[0]?.id ?? '';
+    const m = editing();
+    const selectedId = m ? m.typeId : currentTypeId;
+    typesEl.replaceChildren();
+    for (const t of cfg.types()) {
+      const count = cfg.list().filter((x) => x.typeId === t.id).length;
+      const row = document.createElement('div');
+      row.className = 'type-row' + (t.id === selectedId ? ' selected' : '');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `${cfg.prefix}type`;
+      radio.id = `${cfg.prefix}type-${t.id}`;
+      radio.checked = t.id === selectedId;
+      radio.setAttribute('aria-label', `${t.mark} を使う`);
+      radio.addEventListener('change', () => select(t.id));
+      const mark = textInput(`${cfg.prefix}mark-${t.id}`, t.mark, 'mark', '符号');
+      const inputs = cfg.fields.map((f) => {
+        const el = textInput(`${cfg.prefix}${f.key}-${t.id}`, String(t[f.key]), 'size', f.label);
+        el.inputMode = 'numeric';
+        return el;
       });
-    flash(`${wallName(drawing, w)} の壁を変更しました`);
-  } else {
-    placeWallOffset = wallOffset.value;
-    setMode('wall');
+      const parts: HTMLElement[] = [radio, mark];
+      cfg.fields.forEach((f, i) => {
+        if (f.before) {
+          const sep = document.createElement('span');
+          sep.className = 'times';
+          sep.textContent = f.before;
+          parts.push(sep);
+        }
+        parts.push(inputs[i]);
+      });
+      const cnt = document.createElement('span');
+      cnt.className = 'count';
+      cnt.textContent = `${count}${cfg.unit}`;
+      const apply = () => update(t.id, mark.value, inputs.map((x) => x.value));
+      for (const el of [mark, ...inputs]) {
+        el.addEventListener('change', apply);
+        el.addEventListener('focus', () => select(t.id, false));
+      }
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = '削除';
+      delBtn.setAttribute('aria-label', `${t.mark} を削除`);
+      delBtn.addEventListener('click', () => removeType(t.id));
+      row.append(...parts, cnt, delBtn);
+      typesEl.append(row);
+    }
   }
-  showSheet(null);
-});
 
-wallDelete.addEventListener('click', () => {
-  const w = editingWall();
-  if (!w) return;
-  const name = wallName(drawing, w);
-  commit(() => {
-    drawing.walls = drawing.walls.filter((x) => x.id !== w.id);
+  function select(id: string, rerender = true) {
+    const m = editing();
+    if (m) {
+      if (m.typeId !== id)
+        commit(() => {
+          m.typeId = id;
+        });
+    } else currentTypeId = id;
+    if (rerender) render();
+    else
+      typesEl.querySelectorAll('.type-row').forEach((row, i) => {
+        const on = cfg.types()[i]?.id === id;
+        row.classList.toggle('selected', on);
+        (row.querySelector('input[type="radio"]') as HTMLInputElement).checked = on;
+      });
+    requestRender();
+  }
+
+  function update(id: string, markText: string, values: string[]) {
+    const mark = markText.normalize('NFKC').trim();
+    const nums = values.map((v) => Number(v.normalize('NFKC')));
+    if (!mark) {
+      msg.textContent = '符号を入力してください';
+      render();
+      return;
+    }
+    if (cfg.types().some((x) => x.id !== id && x.mark === mark)) {
+      msg.textContent = `符号 ${mark} はもう使われています`;
+      render();
+      return;
+    }
+    if (nums.some((n) => !(n > 0))) {
+      msg.textContent = '大きさは 0 より大きい数字で入力してください';
+      render();
+      return;
+    }
+    msg.textContent = '';
+    const t = typeOf(id);
+    if (!t || (t.mark === mark && cfg.fields.every((f, i) => t[f.key] === nums[i]))) return;
+    commit(() => {
+      t.mark = mark;
+      cfg.fields.forEach((f, i) => (t[f.key] = nums[i]));
+    });
+    const count = cfg.list().filter((x) => x.typeId === id).length;
+    if (count) flash(`${cfg.describe(t)} に変更しました（${count}${cfg.unit}）`);
+    render();
+  }
+
+  function removeType(id: string) {
+    const t = typeOf(id);
+    if (!t) return;
+    if (cfg.list().some((x) => x.typeId === id)) {
+      msg.textContent = `${t.mark} は図面で使われているので削除できません。先にその${cfg.name}を消してください`;
+      return;
+    }
+    if (cfg.types().length === 1) {
+      msg.textContent = '符号は最低1つ必要です';
+      return;
+    }
+    commit(() => cfg.setTypes(cfg.types().filter((x) => x.id !== id)));
+    msg.textContent = '';
+    render();
+  }
+
+  $<HTMLButtonElement>('type-add').addEventListener('click', () => {
+    const t = cfg.newType(cfg.types());
+    commit(() => cfg.setTypes([...cfg.types(), t]));
+    select(t.id);
   });
-  showSheet(null);
-  flash(`${name} の壁を削除しました（「戻す」で元に戻せます）`);
-});
 
-document.getElementById('wall-close')!.addEventListener('click', () => showSheet(null));
+  $<HTMLFormElement>('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const off = parseOffset(offsetIn.value);
+    if (off === undefined) {
+      msg.textContent = '寄りは数字で入力してください（空欄なら振り分け）';
+      return;
+    }
+    const m = editing();
+    if (m) {
+      if (m.offset !== off)
+        commit(() => {
+          m.offset = off;
+        });
+      flash(`${spanName(drawing, m)} の${cfg.name}を変更しました`);
+    } else {
+      placeOffset = offsetIn.value;
+      setMode(cfg.mode);
+    }
+    showSheet(null);
+  });
 
-function wallTap(screen: Vec2, type: string) {
-  if (!drawing.grid) {
-    flash('壁を置くには、先に「通り芯」を描いてください');
-    return;
-  }
-  const w = view.toWorld(screen);
-  const r = snapRadiusPx(type) / view.scale;
+  del.addEventListener('click', () => {
+    const m = editing();
+    if (!m) return;
+    const name = spanName(drawing, m);
+    commit(() => cfg.setList(cfg.list().filter((x) => x.id !== m.id)));
+    showSheet(null);
+    flash(`${name} の${cfg.name}を削除しました（「戻す」で元に戻せます）`);
+  });
 
-  // 区間を優先して探す（壁の中をタップしても、その区間の壁として扱う）
-  const spans = gridSpans(drawing);
-  const hit = nearestSegment(w, spans, Math.max(r, 400));
-  if (!hit) {
-    // 区間から遠くても、既存の壁の中なら編集
-    const inWall = drawing.walls.find((x) => {
-      const rc = wallRect(drawing, x);
+  $<HTMLButtonElement>('close').addEventListener('click', () => showSheet(null));
+
+  function hit(w: Vec2): LinearMember | undefined {
+    return cfg.list().find((x) => {
+      const rc = cfg.rect(x);
       return rc && w.x >= rc.min.x && w.x <= rc.max.x && w.y >= rc.min.y && w.y <= rc.max.y;
     });
-    if (inWall) openWallSheet(inWall.id);
-    else flash('通り芯の区間（交点と交点の間）をタップしてください');
+  }
+
+  function tap(screen: Vec2, type: string) {
+    if (!drawing.grid) {
+      flash(`${cfg.name}を置くには、先に「通り芯」を描いてください`);
+      return;
+    }
+    const w = view.toWorld(screen);
+    const r = snapRadiusPx(type) / view.scale;
+    const spans = gridSpans(drawing);
+    const h = nearestSegment(w, spans, Math.max(r, 400));
+    if (!h) {
+      const inside = hit(w);
+      if (inside) open(inside.id);
+      else flash('通り芯の区間（交点と交点の間）をタップしてください');
+      return;
+    }
+    const span = spans[h.index];
+    const existing = cfg.list().find((x) => x.axis === span.axis && x.line === span.line && x.from === span.from);
+    if (existing) {
+      open(existing.id);
+      return;
+    }
+    const t = typeOf(currentTypeId)!;
+    const m: LinearMember = {
+      id: newId(),
+      typeId: t.id,
+      axis: span.axis,
+      line: span.line,
+      from: span.from,
+      to: span.to,
+      offset: parseOffset(placeOffset) ?? null,
+    };
+    commit(() => cfg.setList([...cfg.list(), m]));
+    flash(`${t.mark} を ${spanName(drawing, m)} に配置しました`);
+  }
+
+  return {
+    sheet: sheetEl,
+    open,
+    render,
+    tap,
+    hit,
+    get currentType() {
+      return typeOf(currentTypeId);
+    },
+  };
+}
+
+const wallPanel = createMemberPanel({
+  prefix: 'wall',
+  mode: 'wall',
+  name: '壁',
+  unit: '枚',
+  fields: [{ key: 't', label: '厚さ', before: '厚' }],
+  types: () => drawing.wallTypes as unknown as MemberType[],
+  setTypes: (list) => (drawing.wallTypes = list as unknown as WallType[]),
+  list: () => drawing.walls,
+  setList: (list) => (drawing.walls = list as Wall[]),
+  rect: (m) => wallRect(drawing, m as Wall),
+  describe: (t) => `${t.mark}（厚さ${t.t}）`,
+  newType: (types) => ({ id: newId(), mark: nextWallMark(types as unknown as WallType[], 250), t: 250 }),
+});
+
+const beamPanel = createMemberPanel({
+  prefix: 'beam',
+  mode: 'beam',
+  name: '梁',
+  unit: '本',
+  fields: [
+    { key: 'b', label: '幅' },
+    { key: 'd', label: 'せい', before: '×' },
+  ],
+  types: () => drawing.beamTypes as unknown as MemberType[],
+  setTypes: (list) => (drawing.beamTypes = list as unknown as BeamType[]),
+  list: () => drawing.beams,
+  setList: (list) => (drawing.beams = list as Beam[]),
+  rect: (m) => beamRect(drawing, m as Beam),
+  describe: (t) => `${t.mark}（${t.b}×${t.d}）`,
+  newType: (types) => ({ id: newId(), mark: nextBeamMark(types as unknown as BeamType[]), b: 400, d: 800 }),
+});
+
+// ---------- 開口 ----------
+
+const opSheet = document.getElementById('op-sheet') as HTMLElement;
+const opTitle = document.getElementById('op-title') as HTMLElement;
+const opWidth = document.getElementById('op-width') as HTMLInputElement;
+const opStartRow = document.getElementById('op-start-row') as HTMLElement;
+const opStartLabel = document.getElementById('op-start-label') as HTMLElement;
+const opStart = document.getElementById('op-start') as HTMLInputElement;
+const opMsg = document.getElementById('op-msg') as HTMLElement;
+const opOk = document.getElementById('op-ok') as HTMLButtonElement;
+const opDelete = document.getElementById('op-delete') as HTMLButtonElement;
+
+let opEditId: string | null = null;
+let opDefaultWidth = 900;
+
+function openOpeningSheet(id: string | null) {
+  opEditId = id;
+  opMsg.textContent = '';
+  const o = id ? drawing.openings.find((x) => x.id === id) : undefined;
+  const wall = o ? drawing.walls.find((w) => w.id === o.wallId) : undefined;
+  if (o && wall && drawing.grid) {
+    const g = drawing.grid;
+    const startName = wall.axis === 'y' ? `${g.xPrefix}${wall.from + 1}` : `${g.yPrefix}${wall.from + 1}`;
+    opTitle.textContent = `開口（${spanName(drawing, wall)}）`;
+    opWidth.value = String(o.width);
+    opStart.value = String(o.start);
+    opStartLabel.textContent = `${startName} から開口の端まで`;
+    opStartRow.hidden = false;
+    opOk.textContent = '変更を反映';
+    opDelete.hidden = false;
+  } else {
+    opTitle.textContent = '開口';
+    opWidth.value = String(opDefaultWidth);
+    opStartRow.hidden = true;
+    opOk.textContent = '壁をタップして配置';
+    opDelete.hidden = true;
+  }
+  showSheet(opSheet);
+}
+
+document.getElementById('op-form')!.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const width = Number(opWidth.value.normalize('NFKC').trim());
+  if (!(width > 0)) {
+    opMsg.textContent = '幅は 0 より大きい数字で入力してください';
     return;
   }
-  const span = spans[hit.index];
-  const existing = drawing.walls.find((x) => x.axis === span.axis && x.line === span.line && x.from === span.from);
-  if (existing) {
-    openWallSheet(existing.id);
-    return;
+  const o = opEditId ? drawing.openings.find((x) => x.id === opEditId) : undefined;
+  if (o) {
+    const start = Number(opStart.value.normalize('NFKC').trim());
+    if (!Number.isFinite(start)) {
+      opMsg.textContent = '位置は数字で入力してください';
+      return;
+    }
+    commit(() => {
+      o.width = width;
+      o.start = start;
+    });
+    flash(`開口を 幅${formatDim(width)} に変更しました`);
+  } else {
+    opDefaultWidth = width;
+    setMode('opening');
   }
-  const t = drawing.wallTypes.find((x) => x.id === currentWallTypeId)!;
-  const offset = parseOffset(placeWallOffset) ?? null;
-  const wall = { id: newId(), typeId: t.id, axis: span.axis, line: span.line, from: span.from, to: span.to, offset };
+  showSheet(null);
+});
+
+opDelete.addEventListener('click', () => {
+  if (!opEditId) return;
+  const id = opEditId;
   commit(() => {
-    drawing.walls.push(wall);
+    drawing.openings = drawing.openings.filter((x) => x.id !== id);
   });
-  flash(`${t.mark} を ${wallName(drawing, wall)} に配置しました`);
+  showSheet(null);
+  flash('開口を削除しました（「戻す」で元に戻せます）');
+});
+
+document.getElementById('op-close')!.addEventListener('click', () => showSheet(null));
+
+/** タップした点にある開口（壁の厚みの範囲内、長さ方向は開口の範囲内） */
+function openingAt(w: Vec2, r: number) {
+  return drawing.openings.find((o) => {
+    const range = openingRange(drawing, o);
+    if (!range) return false;
+    const rc = wallRect(drawing, range.wall);
+    if (!rc) return false;
+    return range.wall.axis === 'y'
+      ? w.x >= range.s0 - r && w.x <= range.s1 + r && w.y >= rc.min.y - r && w.y <= rc.max.y + r
+      : w.y >= range.s0 - r && w.y <= range.s1 + r && w.x >= rc.min.x - r && w.x <= rc.max.x + r;
+  });
+}
+
+function openingTap(screen: Vec2, type: string) {
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+  const existing = openingAt(w, 0);
+  if (existing) {
+    openOpeningSheet(existing.id);
+    return;
+  }
+  // 壁の中（少し外側まで）をタップ
+  const wall = drawing.walls.find((x) => {
+    const rc = wallRect(drawing, x);
+    return rc && w.x >= rc.min.x - r && w.x <= rc.max.x + r && w.y >= rc.min.y - r && w.y <= rc.max.y + r;
+  });
+  if (!wall || !drawing.grid) {
+    flash('開口を入れる壁をタップしてください');
+    return;
+  }
+  const { xs, ys } = gridPositions(drawing.grid);
+  const along = wall.axis === 'y' ? xs : ys;
+  const s0 = along[wall.from];
+  const s1 = along[wall.to];
+  const width = Math.min(opDefaultWidth, s1 - s0);
+  const center = wall.axis === 'y' ? w.x : w.y;
+  // タップした所を中心に、区間からはみ出さないように。10mm 単位に丸める
+  const start = Math.round(Math.max(0, Math.min(s1 - s0 - width, center - s0 - width / 2)) / 10) * 10;
+  commit(() => {
+    drawing.openings.push({ id: newId(), wallId: wall.id, start, width });
+  });
+  flash(`開口 幅${formatDim(width)} を入れました（タップで位置・幅を変更）`);
 }
 
 // 開発時だけ、自動テストから状態を見られるようにする（本番ビルドでは消える）

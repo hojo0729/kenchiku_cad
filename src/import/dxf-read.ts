@@ -321,7 +321,7 @@ function norm(a: number): number {
   return round(v < 0 ? v + 360 : v);
 }
 
-function text(ctx: Ctx, layer: string, m: M, p: Vec2, h: number, s: string, rot: number, align: 'left' | 'center', valign: 'bottom' | 'middle') {
+function text(ctx: Ctx, layer: string, m: M, p: Vec2, h: number, s: string, rot: number, align: 'left' | 'center' | 'right', valign: 'bottom' | 'middle') {
   const clean = s.trim();
   if (!clean) return;
   ctx.prims.push({
@@ -458,7 +458,7 @@ function emit(ctx: Ctx, e: Ent, m: M, inherited: string | null) {
         num(e, 40, 2.5),
         unescapeUnicode(get(e, 1) ?? '').replace(/%%[cC]/g, 'φ').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±'),
         num(e, 50, 0),
-        h72 === 1 || h72 === 4 ? 'center' : 'left',
+        h72 === 1 || h72 === 4 ? 'center' : h72 === 2 ? 'right' : 'left',
         v73 === 2 || h72 === 4 ? 'middle' : 'bottom',
       );
       return;
@@ -478,7 +478,7 @@ function emit(ctx: Ctx, e: Ent, m: M, inherited: string | null) {
         num(e, 40, 2.5),
         plainMtext(raw),
         Number.isFinite(rot) ? rot : 0,
-        attach % 3 === 2 ? 'center' : 'left',
+        attach % 3 === 2 ? 'center' : attach % 3 === 0 ? 'right' : 'left',
         attach >= 4 && attach <= 6 ? 'middle' : 'bottom',
       );
       return;

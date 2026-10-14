@@ -19,7 +19,7 @@ export type Layer = {
   /** AutoCAD Color Index (1-255)。7 = 白/黒 */
   color: number;
   /** 線種（DXFの LTYPE 名） */
-  linetype?: 'CONTINUOUS' | 'CENTER';
+  linetype?: 'CONTINUOUS' | 'CENTER' | 'HIDDEN';
 };
 
 /**
@@ -91,6 +91,40 @@ export type Wall = {
   offset: number | null;
 };
 
+/** 梁の符号（部材リスト）。G1 = 幅 400 × せい 800 のように決める */
+export type BeamType = {
+  id: string;
+  mark: string;
+  /** 幅(mm) */
+  b: number;
+  /** せい(mm) */
+  d: number;
+};
+
+/** 配置した梁。壁と同じく通り芯の区間に紐づく（axis/line/from/to/offset の意味も同じ） */
+export type Beam = {
+  id: string;
+  typeId: string;
+  axis: 'x' | 'y';
+  line: number;
+  from: number;
+  to: number;
+  offset: number | null;
+};
+
+/**
+ * 壁の開口。壁の区間の始点（from 側の交点、左または下）から開口の端までの距離と幅で持つ。
+ * 壁の通り芯が動いても、始点からの距離が保たれる。
+ */
+export type Opening = {
+  id: string;
+  wallId: string;
+  /** 区間の始点から開口の始まりまで(mm) */
+  start: number;
+  /** 開口の幅(mm) */
+  width: number;
+};
+
 export type Drawing = {
   version: 1;
   units: 'mm';
@@ -103,12 +137,26 @@ export type Drawing = {
   columns: Column[];
   wallTypes: WallType[];
   walls: Wall[];
+  beamTypes: BeamType[];
+  beams: Beam[];
+  openings: Opening[];
+  /** 柱・壁の寄り寸法（通り芯から各面まで）を描くか */
+  showOffsetDims: boolean;
 };
 
 export const LAYER_GRID = 'GRID';
 export const LAYER_DIM = 'DIM';
 export const LAYER_COLUMN = 'COLUMN';
 export const LAYER_WALL = 'WALL';
+export const LAYER_BEAM = 'BEAM';
+export const LAYER_OPENING = 'OPENING';
+
+export function defaultBeamTypes(): BeamType[] {
+  return [
+    { id: 'bt1', mark: 'G1', b: 400, d: 800 },
+    { id: 'bt2', mark: 'G2', b: 350, d: 700 },
+  ];
+}
 
 export function defaultWallTypes(): WallType[] {
   return [
@@ -125,6 +173,8 @@ export function defaultLayers(): Layer[] {
     { name: LAYER_DIM, color: 3 },
     { name: LAYER_COLUMN, color: 4 },
     { name: LAYER_WALL, color: 5 },
+    { name: LAYER_BEAM, color: 6, linetype: 'HIDDEN' },
+    { name: LAYER_OPENING, color: 2 },
   ];
 }
 
@@ -139,6 +189,10 @@ export function createDrawing(): Drawing {
     columns: [],
     wallTypes: defaultWallTypes(),
     walls: [],
+    beamTypes: defaultBeamTypes(),
+    beams: [],
+    openings: [],
+    showOffsetDims: true,
   };
 }
 
@@ -154,6 +208,10 @@ export function normalizeDrawing(d: Drawing): Drawing {
   out.columns = out.columns ?? [];
   out.wallTypes = out.wallTypes?.length ? out.wallTypes : defaultWallTypes();
   out.walls = out.walls ?? [];
+  out.beamTypes = out.beamTypes?.length ? out.beamTypes : defaultBeamTypes();
+  out.beams = out.beams ?? [];
+  out.openings = out.openings ?? [];
+  out.showOffsetDims = out.showOffsetDims ?? true;
   return out;
 }
 

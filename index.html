@@ -19,7 +19,7 @@
             <span class="menu-title">下敷き</span><span class="menu-sub">設計図のDXFを読み込む・位置合わせ</span>
           </button>
           <button id="menu-dxf" data-action="exportDxf" role="menuitem">
-            <span class="menu-title">DXFで保存</span><span class="menu-sub">描いた通り芯・柱・線を保存</span>
+            <span class="menu-title">DXFで保存</span><span class="menu-sub">描いた図面（通り芯・柱・壁・梁・線）を保存</span>
           </button>
           <div class="menu-row">
             <label for="grid" class="menu-title">グリッド</label>
@@ -30,6 +30,13 @@
               <option value="0">なし</option>
             </select>
           </div>
+          <div class="menu-row">
+            <label for="menu-offset-dims" class="menu-title">寄り寸法を表示</label>
+            <input id="menu-offset-dims" type="checkbox" class="menu-check" />
+          </div>
+          <button id="menu-sample" data-action="openSample" role="menuitem">
+            <span class="menu-title">サンプルを開く</span><span class="menu-sub">通り芯・柱・壁・開口・梁の例（「戻す」で元に戻せます）</span>
+          </button>
           <button id="btn-clear" data-action="clear" role="menuitem">
             <span class="menu-title">全消去</span><span class="menu-sub">自分で描いたものを全部消す（下敷きは残る）</span>
           </button>
@@ -42,6 +49,8 @@
         <button id="btn-gridline" data-action="gridPanel">通り芯</button>
         <button id="btn-column" data-action="column" data-mode="column" class="tool">柱</button>
         <button id="btn-wall" data-action="wall" data-mode="wall" class="tool">壁</button>
+        <button id="btn-opening" data-action="opening" data-mode="opening" class="tool">開口</button>
+        <button id="btn-beam" data-action="beam" data-mode="beam" class="tool">梁</button>
         <button id="btn-line" data-action="line" data-mode="line" class="tool active">線</button>
         <button id="btn-ortho" data-action="ortho" aria-pressed="false">直交</button>
         <button id="btn-offset" data-action="offset" data-mode="offset" class="tool">オフセット</button>
@@ -154,6 +163,50 @@
             <button type="submit" id="wall-ok" class="primary">通り芯の区間をタップして配置</button>
             <button type="button" id="wall-delete" hidden>この壁を削除</button>
             <button type="button" id="wall-close">閉じる</button>
+          </div>
+        </form>
+      </section>
+      <section id="beam-sheet" class="sheet" hidden aria-label="梁の設定">
+        <form id="beam-form" class="sheet-body" novalidate>
+          <h2 id="beam-title">梁</h2>
+          <p class="hint">符号ごとに幅とせいを決めます（幅×せい）。ここを直すと、その符号の梁が図面上で全部変わります。伏図として破線で描き、柱の面で止めます。</p>
+          <div id="beam-types" class="type-list" role="radiogroup" aria-label="梁の符号"></div>
+          <div class="sheet-actions">
+            <button type="button" id="beam-type-add">符号を追加</button>
+          </div>
+          <fieldset class="group">
+            <legend>寄り（通り芯から梁の側面まで、mm）</legend>
+            <label class="field inline" for="beam-offset">
+              <span>通り芯 → 左面・下面</span>
+              <input id="beam-offset" type="text" inputmode="decimal" autocomplete="off" placeholder="振り分け" />
+            </label>
+            <p class="hint">縦の梁は左面まで、横の梁は下面まで。空欄は振り分け。</p>
+          </fieldset>
+          <p id="beam-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="beam-ok" class="primary">通り芯の区間をタップして配置</button>
+            <button type="button" id="beam-delete" hidden>この梁を削除</button>
+            <button type="button" id="beam-close">閉じる</button>
+          </div>
+        </form>
+      </section>
+      <section id="op-sheet" class="sheet" hidden aria-label="開口の設定">
+        <form id="op-form" class="sheet-body" novalidate>
+          <h2 id="op-title">開口</h2>
+          <p class="hint">壁をタップすると、その位置に開口を入れて壁を切り欠きます。入れた開口をタップすると、位置と幅を数字で直せます。</p>
+          <label class="field inline" for="op-width">
+            <span>幅（mm）</span>
+            <input id="op-width" type="text" inputmode="decimal" autocomplete="off" value="900" />
+          </label>
+          <label id="op-start-row" class="field inline" for="op-start" hidden>
+            <span id="op-start-label">始点から開口の端まで</span>
+            <input id="op-start" type="text" inputmode="decimal" autocomplete="off" />
+          </label>
+          <p id="op-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="op-ok" class="primary">壁をタップして配置</button>
+            <button type="button" id="op-delete" hidden>この開口を削除</button>
+            <button type="button" id="op-close">閉じる</button>
           </div>
         </form>
       </section>

@@ -1,14 +1,15 @@
 import type { Drawing, Vec2 } from '../model';
 import { decomposeGrid } from './grid';
 import { decomposeColumns } from './column';
-import { decomposeWalls } from './wall';
+import { decomposeBeams, decomposeWalls } from './wall';
+import { decomposeOffsetDims } from './offset-dims';
 
 /**
  * 図面を構成する最小単位。画面描画と DXF/JWW 書き出しはこれだけを扱う。
  * 建築部材（通り芯・壁・建具…）は decompose() でここに分解される。
  */
 export type Prim =
-  | { t: 'line'; layer: string; a: Vec2; b: Vec2; ltype?: 'CONTINUOUS' | 'CENTER' }
+  | { t: 'line'; layer: string; a: Vec2; b: Vec2; ltype?: 'CONTINUOUS' | 'CENTER' | 'HIDDEN' }
   | { t: 'circle'; layer: string; c: Vec2; r: number }
   /** 円弧。a0→a1 へ反時計回り（度） */
   | { t: 'arc'; layer: string; c: Vec2; r: number; a0: number; a1: number }
@@ -20,7 +21,7 @@ export type Prim =
       /** 文字高さ（実寸mm） */
       h: number;
       s: string;
-      align: 'left' | 'center';
+      align: 'left' | 'center' | 'right';
       /** bottom = ベースライン基準 */
       valign: 'bottom' | 'middle';
       /** 回転角（度、反時計回り） */
@@ -32,11 +33,18 @@ export function centerPattern(scale: number): number[] {
   return [12, 1.5, 1.5, 1.5].map((v) => v * scale);
 }
 
+/** 破線（かくれ線）のパターン（実線, 空き）。用紙上 3/1.5mm × 縮尺 */
+export function hiddenPattern(scale: number): number[] {
+  return [3, 1.5].map((v) => v * scale);
+}
+
 export function decompose(drawing: Drawing): Prim[] {
   const prims: Prim[] = [];
   if (drawing.grid) prims.push(...decomposeGrid(drawing.grid, drawing.scale));
+  prims.push(...decomposeBeams(drawing));
   prims.push(...decomposeWalls(drawing));
   prims.push(...decomposeColumns(drawing));
+  if (drawing.showOffsetDims) prims.push(...decomposeOffsetDims(drawing));
   for (const e of drawing.entities) {
     if (e.kind === 'line') prims.push({ t: 'line', layer: e.layer, a: e.a, b: e.b });
   }

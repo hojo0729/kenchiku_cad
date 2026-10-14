@@ -47,7 +47,7 @@ describe('toDxf', () => {
   it('Jw_cad が必要とするヘッダ・テーブル・BLOCKS を含む', () => {
     const p = pairs(toDxf(sample()));
     const vars = p.filter(([c]) => c === 9).map(([, v]) => v);
-    expect(vars).toEqual(['$ACADVER', '$INSBASE', '$EXTMIN', '$EXTMAX', '$LIMMIN', '$LIMMAX', '$LTSCALE']);
+    expect(vars).toEqual(['$ACADVER', '$DWGCODEPAGE', '$INSBASE', '$EXTMIN', '$EXTMAX', '$LIMMIN', '$LIMMAX', '$LTSCALE']);
     const sections = p.filter(([c], i) => c === 2 && p[i - 1]?.[1] === 'SECTION').map(([, v]) => v);
     expect(sections).toEqual(['HEADER', 'TABLES', 'BLOCKS', 'ENTITIES']);
     const tables = p.filter(([c], i) => c === 2 && p[i - 1]?.[1] === 'TABLE').map(([, v]) => v);
@@ -82,5 +82,22 @@ describe('toDxf', () => {
       if ((c >= 60 && c <= 99) || (c >= 170 && c <= 179)) expect(v).toMatch(/^-?\d+$/);
     }
     expect(p).toContainEqual([2, 'WALL']);
+  });
+});
+
+describe('日本語（Shift_JIS）', () => {
+  it('開口などの日本語は Shift_JIS で書き、読み戻すと同じ文字になる', async () => {
+    const { encodeShiftJis } = await import('./sjis');
+    expect([...encodeShiftJis('開口A')]).toEqual([0x8a, 0x4a, 0x8c, 0xfb, 0x41]);
+    expect([...encodeShiftJis('ｱ')]).toEqual([0xb1]);
+    const { toDxfBytes } = await import('./dxf');
+    const d = createDrawing();
+    d.grid = { xSpans: [6000], ySpans: [6000], xPrefix: 'X', yPrefix: 'Y', origin: { x: 0, y: 0 } };
+    d.walls = [{ id: 'w', typeId: 'wt18', axis: 'y', line: 0, from: 0, to: 1, offset: null }];
+    d.openings = [{ id: 'o', wallId: 'w', start: 1000, width: 900 }];
+    const bytes = toDxfBytes(d);
+    const back = new TextDecoder('shift_jis').decode(bytes);
+    expect(back).toContain('開口900');
+    expect(back).toContain('ANSI_932');
   });
 });

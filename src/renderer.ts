@@ -44,6 +44,8 @@ export type RenderState = {
   grid: number;
   /** 一点鎖線のパターン（実寸mm）。縮尺に比例 */
   centerPattern: number[];
+  /** 破線（梁）のパターン（実寸mm） */
+  hiddenPattern: number[];
   /** 作図中の始点 */
   pending: Vec2 | null;
   /** カーソル位置（スナップ済み） */
@@ -72,8 +74,8 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
       const b = view.toScreen(p.b);
       ctx.strokeStyle = colorOf(p.layer);
       ctx.lineWidth = p.layer === LAYER_COLUMN ? 2 : p.layer === LAYER_WALL ? 1.6 : p.layer === '0' ? 1.4 : 1;
-      if (p.ltype === 'CENTER') {
-        const dash = st.centerPattern.map((v) => v * view.scale);
+      if (p.ltype === 'CENTER' || p.ltype === 'HIDDEN') {
+        const dash = (p.ltype === 'CENTER' ? st.centerPattern : st.hiddenPattern).map((v) => v * view.scale);
         ctx.setLineDash(dash.reduce((s, v) => s + v, 0) >= 6 ? dash : []);
       } else {
         ctx.setLineDash([]);

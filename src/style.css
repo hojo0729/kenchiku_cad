@@ -539,3 +539,9 @@ html, body {
 
 #off-sheet .field.inline span { width: 6em; flex: none; }
 #off-sheet .field.inline input { flex: 1; min-width: 0; }
+
+#beam-sheet .group .field.inline span { width: 9em; }
+#op-sheet .field.inline span { width: 9em; flex: none; }
+#op-sheet .field.inline input { flex: 1; min-width: 0; }
+#op-sheet .field.inline[hidden] { display: none; }
+.menu-check { width: 24px; height: 24px; accent-color: var(--accent); }

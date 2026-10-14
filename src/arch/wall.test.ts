@@ -115,3 +115,79 @@ describe('壁の補助', () => {
     expect(wallsInRange(walls, 2, 2)).toHaveLength(1);
   });
 });
+
+describe('開口', () => {
+  it('開口の部分の壁の線が抜け、両端に見切りの線が出る', async () => {
+    const { wallPieces } = await import('./wall');
+    const d = drawing();
+    d.walls = [W('y', 0, 0, 1)];
+    d.openings = [{ id: 'o', wallId: d.walls[0].id, start: 2000, width: 900 }];
+    expect(wallPieces(d, d.walls[0])).toEqual([
+      { min: { x: 0, y: -100 }, max: { x: 2000, y: 100 } },
+      { min: { x: 2900, y: -100 }, max: { x: 6000, y: 100 } },
+    ]);
+    const segs = norm(wallOutline(d));
+    expect(segs).toContain('0,100-2000,100');
+    expect(segs).toContain('2900,100-6000,100');
+    expect(segs).toContain('2000,-100-2000,100'); // 見切り
+    expect(segs).toContain('2900,-100-2900,100');
+  });
+
+  it('スパンを変えても、区間の始点からの距離は保たれる', async () => {
+    const { openingRange } = await import('./wall');
+    const d = drawing();
+    d.walls = [W('y', 0, 1, 2)];
+    d.openings = [{ id: 'o', wallId: d.walls[0].id, start: 1000, width: 900 }];
+    expect(openingRange(d, d.openings[0])).toMatchObject({ s0: 7000, s1: 7900 });
+    d.grid!.xSpans = [8000, 6000];
+    expect(openingRange(d, d.openings[0])).toMatchObject({ s0: 9000, s1: 9900 });
+  });
+});
+
+describe('梁', () => {
+  it('破線の外形と「G1 400×800」の表記、柱で止まる', async () => {
+    const { decomposeBeams, beamRect } = await import('./wall');
+    const d = drawing();
+    d.beamTypes = [{ id: 'g1', mark: 'G1', b: 400, d: 800 }];
+    d.beams = [
+      { id: 'b1', typeId: 'g1', axis: 'y', line: 0, from: 0, to: 1, offset: null },
+      { id: 'b2', typeId: 'g1', axis: 'y', line: 0, from: 1, to: 2, offset: null },
+    ];
+    d.columns = [{ id: 'c', typeId: 'ct1', xi: 1, yi: 0, left: null, bottom: null }];
+    expect(beamRect(d, d.beams[0])).toEqual({ min: { x: 0, y: -200 }, max: { x: 6000, y: 200 } });
+    const prims = decomposeBeams(d);
+    const lines = prims.filter((p) => p.t === 'line');
+    expect(lines.every((p) => p.t === 'line' && p.ltype === 'HIDDEN')).toBe(true);
+    expect(norm(lines.map((p) => (p.t === 'line' ? p : { a: { x: 0, y: 0 }, b: { x: 0, y: 0 } })))).toContain('0,200-5600,200');
+    expect(prims.some((p) => p.t === 'text' && p.s === 'G1 400×800')).toBe(true);
+    expect(toDxf(d)).toMatch(/\r\nHIDDEN\r\n/);
+  });
+});
+
+describe('寄り寸法', () => {
+  it('柱: 左面｜通り芯｜右面 の寸法（外面合わせ 150 / 550）', async () => {
+    const { decomposeOffsetDims } = await import('./offset-dims');
+    const d = drawing();
+    d.columnTypes = [{ id: 'ct1', mark: 'C1', bx: 700, by: 700 }];
+    d.columns = [{ id: 'c', typeId: 'ct1', xi: 0, yi: 0, left: 150, bottom: null }];
+    const texts = decomposeOffsetDims(d).filter((p) => p.t === 'text').map((p) => (p.t === 'text' ? p.s : ''));
+    expect(texts).toEqual(['150', '550', '350', '350']);
+  });
+
+  it('壁: 下面｜通り芯｜上面', async () => {
+    const { decomposeOffsetDims } = await import('./offset-dims');
+    const d = drawing();
+    d.walls = [W('y', 0, 0, 1, 150)];
+    const texts = decomposeOffsetDims(d).filter((p) => p.t === 'text').map((p) => (p.t === 'text' ? p.s : ''));
+    expect(texts).toEqual(['150', '50']);
+  });
+
+  it('表示を切ると描かない', async () => {
+    const { decompose } = await import('./primitives');
+    const d = drawing();
+    d.walls = [W('y', 0, 0, 1, 150)];
+    const n = decompose(d).length;
+    d.showOffsetDims = false;
+    expect(decompose(d).length).toBeLessThan(n);
+  });
+});

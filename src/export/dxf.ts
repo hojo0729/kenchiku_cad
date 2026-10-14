@@ -1,5 +1,6 @@
 import type { Drawing, Layer, Vec2 } from '../model';
-import { centerPattern, decompose, primExtents, type Prim } from '../arch/primitives';
+import { encodeShiftJis } from './sjis';
+import { centerPattern, decompose, hiddenPattern, primExtents, type Prim } from '../arch/primitives';
 
 /**
  * DXF R12 (AC1009) ASCII 形式で書き出す。
@@ -59,6 +60,8 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(2, 'HEADER');
   g(9, '$ACADVER');
   g(1, 'AC1009');
+  g(9, '$DWGCODEPAGE');
+  g(3, 'ANSI_932'); // 日本語は Shift_JIS（toDxfBytes で変換）
   g(9, '$INSBASE');
   point(10, { x: 0, y: 0 });
   g(9, '$EXTMIN');
@@ -130,7 +133,7 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   const cp = centerPattern(scale);
   g(0, 'TABLE');
   g(2, 'LTYPE');
-  g(70, 2);
+  g(70, 3);
   g(0, 'LTYPE');
   g(2, 'CONTINUOUS');
   g(70, 0);
@@ -149,6 +152,16 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(49, -cp[1]);
   g(49, cp[2]);
   g(49, -cp[3]);
+  const hp = hiddenPattern(scale);
+  g(0, 'LTYPE');
+  g(2, 'HIDDEN');
+  g(70, 0);
+  g(3, 'Hidden __ __ __ __');
+  g(72, 65);
+  g(73, 2);
+  g(40, hp[0] + hp[1]);
+  g(49, hp[0]);
+  g(49, -hp[1]);
   g(0, 'ENDTAB');
 
   // LAYER
@@ -229,7 +242,7 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
         g(40, p.h);
         g(1, p.s);
         if (p.rot) g(50, p.rot);
-        const h = p.align === 'center' ? 1 : 0;
+        const h = p.align === 'center' ? 1 : p.align === 'right' ? 2 : 0;
         const v = p.valign === 'middle' ? 2 : 0;
         if (h || v) {
           g(72, h);
@@ -274,4 +287,9 @@ function num(v: number): string {
   if (Object.is(v, -0)) v = 0;
   if (Number.isInteger(v)) return v.toFixed(1);
   return v.toFixed(6).replace(/0+$/, '').replace(/\.$/, '.0');
+}
+
+/** ファイルに書くバイト列（日本語は Shift_JIS） */
+export function toDxfBytes(drawing: Drawing, options: DxfOptions = {}): Uint8Array<ArrayBuffer> {
+  return encodeShiftJis(toDxf(drawing, options));
 }
