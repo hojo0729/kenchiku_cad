@@ -679,7 +679,7 @@ async function exportDxf() {
     // claude.ai の公開ページ: .dxf は直接保存できないので zip に包む
     const downloads = (await host.use('downloads')) as DownloadsApi | null;
     if (!downloads) {
-      flash('この画面では保存できません。PCのブラウザで開いてください');
+      flash('保存不可（downloads なし）: この画面では保存できません');
       return;
     }
     const zip = zipStore([{ name: `${name}.dxf`, data: bytes }]);
@@ -687,8 +687,12 @@ async function exportDxf() {
       await downloads.save({ filename: `${name}.zip`, data: zip });
       flash('保存しました（zipを展開するとDXF。「開く」ならzipのままで続きを編集できます）');
     } catch (e) {
-      const code = (e as { code?: string })?.code;
-      if (code !== 'declined') flash('保存できませんでした。少し待ってからもう一度試してください');
+      const code = (e as { code?: string })?.code ?? 'unknown';
+      if (code === 'declined') return;
+      if (code === 'rate_limited') flash('保存の確認がまだ開いています。少し待ってからもう一度試してください');
+      else if (code === 'extension_not_enabled' || code === 'rejected_extension')
+        flash(`保存不可（${code}）: この画面では zip を保存できません`);
+      else flash(`保存失敗（${code}）`);
     }
     return;
   }
