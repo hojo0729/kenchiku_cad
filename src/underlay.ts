@@ -1,7 +1,7 @@
 import type { Prim } from './arch/primitives';
 import { primExtents } from './arch/primitives';
 import type { Vec2 } from './model';
-import type { SnapCandidate } from './snap';
+import type { Segment, SnapCandidate } from './snap';
 import type { Viewport } from './viewport';
 
 /**
@@ -118,6 +118,19 @@ export function segmentIntersection(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | 
   const u = ((c.x - a.x) * r.y - (c.y - a.y) * r.x) / den;
   if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
   return { x: Math.round((a.x + t * r.x) * 100) / 100, y: Math.round((a.y + t * r.y) * 100) / 100 };
+}
+
+let segCache: { prims: Prim[]; dx: number; dy: number; list: Segment[] } | null = null;
+
+/** 下敷きの線分（線上スナップ用）。ずらし量込み */
+export function underlaySegments(u: Underlay): Segment[] {
+  if (segCache && segCache.prims === u.prims && segCache.dx === u.dx && segCache.dy === u.dy) return segCache.list;
+  const list: Segment[] = [];
+  for (const p of u.prims) {
+    if (p.t === 'line') list.push({ a: { x: p.a.x + u.dx, y: p.a.y + u.dy }, b: { x: p.b.x + u.dx, y: p.b.y + u.dy } });
+  }
+  segCache = { prims: u.prims, dx: u.dx, dy: u.dy, list };
+  return list;
 }
 
 // ---------- 描画 ----------

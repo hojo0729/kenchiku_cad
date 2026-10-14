@@ -9,29 +9,42 @@
   <body>
     <!--app:start-->
     <div id="app">
-      <header class="status" id="status" aria-live="polite">準備完了</header>
+      <header class="topbar">
+        <button id="btn-menu" class="menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="menu">
+          <span class="menu-icon" aria-hidden="true"></span>メニュー
+        </button>
+        <div class="status" id="status" aria-live="polite">準備完了</div>
+        <div id="menu" class="menu" hidden role="menu" aria-label="メニュー">
+          <button id="menu-underlay" data-action="underlayPanel" role="menuitem">
+            <span class="menu-title">下敷き</span><span class="menu-sub">設計図のDXFを読み込む・位置合わせ</span>
+          </button>
+          <button id="menu-dxf" data-action="exportDxf" role="menuitem">
+            <span class="menu-title">DXFで保存</span><span class="menu-sub">描いた通り芯・柱・線を保存</span>
+          </button>
+          <div class="menu-row">
+            <label for="grid" class="menu-title">グリッド</label>
+            <select id="grid">
+              <option value="1000">1000</option>
+              <option value="500">500</option>
+              <option value="100" selected>100</option>
+              <option value="0">なし</option>
+            </select>
+          </div>
+          <button id="btn-clear" data-action="clear" role="menuitem">
+            <span class="menu-title">全消去</span><span class="menu-sub">自分で描いたものを全部消す（下敷きは残る）</span>
+          </button>
+        </div>
+      </header>
       <main class="stage">
         <canvas id="canvas"></canvas>
       </main>
       <nav class="toolbar" aria-label="ツール">
-        <button id="btn-underlay" data-action="underlayPanel">下敷き</button>
         <button id="btn-gridline" data-action="gridPanel">通り芯</button>
         <button id="btn-column" data-action="column" class="tool">柱</button>
         <button id="btn-line" data-action="line" class="tool active">線</button>
         <button id="btn-end" data-action="endChain">線を終了</button>
         <button id="btn-undo" data-action="undo">戻す</button>
         <button id="btn-fit" data-action="fit">全体</button>
-        <label class="grid-select" for="grid">
-          グリッド
-          <select id="grid">
-            <option value="1000">1000</option>
-            <option value="500">500</option>
-            <option value="100" selected>100</option>
-            <option value="0">なし</option>
-          </select>
-        </label>
-        <button id="btn-clear" data-action="clear">全消去</button>
-        <button id="btn-dxf" data-action="exportDxf" class="primary">DXF保存</button>
       </nav>
       <section id="grid-sheet" class="sheet" hidden aria-label="通り芯の設定">
         <form id="grid-form" class="sheet-body" novalidate>

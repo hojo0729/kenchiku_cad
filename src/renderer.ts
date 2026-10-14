@@ -149,7 +149,7 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     ctx.restore();
   }
 
-  // スナップマーカー（□=端点、×=交点、+=グリッド）
+  // スナップマーカー（□=端点、×=交点、砂時計=線上、+=グリッド）
   if (st.cursor) {
     const p = view.toScreen(st.cursor.point);
     ctx.save();
@@ -158,6 +158,13 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     ctx.beginPath();
     if (st.cursor.kind === 'endpoint') {
       ctx.rect(p.x - 6, p.y - 6, 12, 12);
+    } else if (st.cursor.kind === 'online') {
+      // 線上: 砂時計形
+      ctx.moveTo(p.x - 6, p.y - 6);
+      ctx.lineTo(p.x + 6, p.y - 6);
+      ctx.lineTo(p.x - 6, p.y + 6);
+      ctx.lineTo(p.x + 6, p.y + 6);
+      ctx.closePath();
     } else if (st.cursor.kind === 'intersection') {
       ctx.moveTo(p.x - 7, p.y - 7);
       ctx.lineTo(p.x + 7, p.y + 7);
@@ -215,4 +222,44 @@ function drawSnapGrid(ctx: CanvasRenderingContext2D, w: number, h: number, view:
   ctx.moveTo(0, Math.round(o.y) + 0.5);
   ctx.lineTo(w, Math.round(o.y) + 0.5);
   ctx.stroke();
+}
+
+/**
+ * 長押し中のルーペ。カーソルのまわりを拡大して、指で隠れないよう斜め上に表示する。
+ * canvas 自身を拡大コピーするので、描画した後に呼ぶ。
+ */
+export function drawLoupe(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, at: Vec2, w: number, theme: Theme) {
+  const dpr = canvas.width / w || 1;
+  const r = 58;
+  const zoom = 2.5;
+  // 基本はカーソルの左上。画面外に出るなら右や下へ逃がす
+  let cx = at.x - 70;
+  let cy = at.y - 90;
+  if (cx - r < 4) cx = at.x + 70;
+  if (cy - r < 4) cy = at.y + 90;
+  const src = r / zoom;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = theme.canvas;
+  ctx.fill();
+  ctx.clip();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(canvas, (at.x - src) * dpr, (at.y - src) * dpr, src * 2 * dpr, src * 2 * dpr, cx - r, cy - r, r * 2, r * 2);
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = theme.preview;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 8, cy);
+  ctx.lineTo(cx + 8, cy);
+  ctx.moveTo(cx, cy - 8);
+  ctx.lineTo(cx, cy + 8);
+  ctx.stroke();
+  ctx.strokeStyle = theme.ink;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
 }

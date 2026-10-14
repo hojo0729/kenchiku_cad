@@ -62,3 +62,41 @@ describe('交点の優先', () => {
     expect(r.kind).toBe('intersection');
   });
 });
+
+describe('線上スナップ', () => {
+  const seg = [{ a: { x: 0, y: 0 }, b: { x: 10000, y: 0 } }];
+  it('点が無いところでは線の上のいちばん近い点に吸着', () => {
+    const r = snapPoint({ x: 3333, y: 40 }, [], 100, 100, seg);
+    expect(r).toEqual({ point: { x: 3333, y: 0 }, kind: 'online' });
+  });
+  it('端点が近ければ端点が優先', () => {
+    const r = snapPoint({ x: 9960, y: 40 }, [{ p: { x: 10000, y: 0 }, kind: 'endpoint' }], 100, 100, seg);
+    expect(r.kind).toBe('endpoint');
+  });
+  it('線から遠ければグリッド', () => {
+    expect(snapPoint({ x: 3333, y: 400 }, [], 100, 100, seg).kind).toBe('grid');
+  });
+});
+
+describe('点と線の比べ方', () => {
+  it('遠くの交点より、指の真下の線を選ぶ', () => {
+    const r = snapPoint(
+      { x: 3000, y: 50 },
+      [{ p: { x: 5000, y: 0 }, kind: 'intersection' }],
+      2500,
+      0,
+      [{ a: { x: 0, y: 0 }, b: { x: 10000, y: 0 } }],
+    );
+    expect(r).toEqual({ point: { x: 3000, y: 0 }, kind: 'online' });
+  });
+  it('点のすぐ近くなら、線より点を選ぶ', () => {
+    const r = snapPoint(
+      { x: 4950, y: 40 },
+      [{ p: { x: 5000, y: 0 }, kind: 'intersection' }],
+      2500,
+      0,
+      [{ a: { x: 0, y: 0 }, b: { x: 10000, y: 0 } }],
+    );
+    expect(r.kind).toBe('intersection');
+  });
+});

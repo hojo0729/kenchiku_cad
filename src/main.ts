@@ -1,12 +1,12 @@
-import { createDrawing, distance, newId, normalizeDrawing, type Drawing, type Vec2 } from './model';
+import { createDrawing, distance, LAYER_DIM, newId, normalizeDrawing, type Drawing, type Vec2 } from './model';
 import { Viewport } from './viewport';
-import { snapCandidates, snapPoint, type SnapResult } from './snap';
+import { snapCandidates, snapPoint, type Segment, type SnapResult } from './snap';
 import { centerPattern, decompose, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { readDxf } from './import/dxf-read';
-import { loadUnderlay, saveUnderlay, underlayExtents, underlaySnapCandidates, type Underlay } from './underlay';
-import { readTheme, render, type Theme } from './renderer';
+import { loadUnderlay, saveUnderlay, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
+import { drawLoupe, readTheme, render, type Theme } from './renderer';
 import { toDxf } from './export/dxf';
 import { zipStore } from './export/zip';
 
@@ -115,6 +115,7 @@ function frame() {
     },
     theme,
   );
+  if (gesture === 'press' && pressAt && cursor) drawLoupe(ctx, canvas, view.toScreen(cursor.point), cssW, theme);
   updateStatus();
 }
 
@@ -163,6 +164,13 @@ function flash(msg: string) {
 }
 
 function updateStatus() {
+  // 長押し中の案内は、前の操作のメッセージより優先
+  if (gesture === 'press') {
+    statusEl.classList.remove('flash');
+    const label = cursor ? { endpoint: '端点', intersection: '交点', online: '線上', grid: 'グリッド', none: '' }[cursor.kind] : '';
+    statusEl.textContent = `${label ? `【${label}】` : ''}指を動かして合わせ、離すと決定`;
+    return;
+  }
   statusEl.classList.toggle('flash', !!flashMsg);
   if (flashMsg) {
     statusEl.textContent = flashMsg;
@@ -189,7 +197,8 @@ function updateStatus() {
   if (cursor) {
     parts.push(`X ${fmt(cursor.point.x)}  Y ${fmt(cursor.point.y)}`);
     if (cursor.kind === 'endpoint') parts.push('端点');
-    if (cursor.kind === 'intersection') parts.push('通り芯交点');
+    if (cursor.kind === 'intersection') parts.push('交点');
+    if (cursor.kind === 'online') parts.push('線上');
   }
   if (pending && cursor) parts.push(`長さ ${fmt(distance(pending, cursor.point))}`);
   parts.push(`線 ${drawing.entities.length}本`);
@@ -205,10 +214,19 @@ function fmt(v: number) {
 
 type Ptr = { x: number; y: number; sx: number; sy: number; type: string };
 const pointers = new Map<number, Ptr>();
-let gesture: 'none' | 'pan' | 'pinch' = 'none';
+/** press = 長押し中（カーソルを指の上に出して吸着先を選ぶ） */
+let gesture: 'none' | 'pan' | 'pinch' | 'press' = 'none';
 let tapCandidate = false;
 let pinchDist = 0;
 let pinchMid: Vec2 = { x: 0, y: 0 };
+
+/** 長押しと判定するまでの時間(ms) */
+const PRESS_MS = 380;
+/** 長押し中、カーソルを指から上にずらす量(px)。指で隠れないように */
+const PRESS_OFFSET = 64;
+let pressTimer = 0;
+/** 長押し中のカーソル位置（画面座標、指からずらした点） */
+let pressAt: Vec2 | null = null;
 
 function localPos(e: PointerEvent | WheelEvent): Vec2 {
   const r = canvas.getBoundingClientRect();
@@ -216,17 +234,34 @@ function localPos(e: PointerEvent | WheelEvent): Vec2 {
 }
 
 function snapRadiusPx(type: string) {
+  if (type === 'press') return 36; // 長押しは広めに拾う（ルーペで確認できるので）
   return type === 'touch' ? 28 : 12;
+}
+
+/** 線上スナップの対象: 自分の図面の線（寸法線を除く）と下敷きの線 */
+function ownSegments(): Segment[] {
+  const out: Segment[] = [];
+  for (const p of decompose(drawing)) {
+    if (p.t === 'line' && p.layer !== LAYER_DIM) out.push({ a: p.a, b: p.b });
+  }
+  return out;
 }
 
 function updateCursor(screen: Vec2, type: string) {
   const world = view.toWorld(screen);
   const radius = snapRadiusPx(type) / view.scale;
-  const ul = underlay?.visible ? underlaySnapCandidates(underlay) : [];
-  // 位置合わせの1点目は下敷きの点だけ、2点目は自分の図面の点だけに吸着
-  const candidates =
-    mode === 'align' && !alignFrom ? ul : mode === 'align' ? snapCandidates(drawing) : snapCandidates(drawing, pending ? [pending] : [], ul);
-  cursor = snapPoint(world, candidates, radius, mode === 'align' ? 0 : grid);
+  const ulPts = underlay?.visible ? underlaySnapCandidates(underlay) : [];
+  const ulSegs = underlay?.visible ? underlaySegments(underlay) : [];
+  // 位置合わせの1点目は下敷きだけ、2点目は自分の図面だけに吸着
+  if (mode === 'align') {
+    cursor = alignFrom
+      ? snapPoint(world, snapCandidates(drawing), radius, 0, ownSegments())
+      : snapPoint(world, ulPts, radius, 0, ulSegs);
+  } else {
+    const segs = ownSegments();
+    for (const s of ulSegs) segs.push(s);
+    cursor = snapPoint(world, snapCandidates(drawing, pending ? [pending] : [], ulPts), radius, grid, segs);
+  }
   requestRender();
 }
 
@@ -235,10 +270,28 @@ function twoPointers(): [Ptr, Ptr] {
   return [a, b];
 }
 
+function cancelPress() {
+  clearTimeout(pressTimer);
+  pressTimer = 0;
+}
+
+function startPress(ptr: Ptr) {
+  gesture = 'press';
+  tapCandidate = false;
+  pressAt = { x: ptr.x, y: ptr.y - PRESS_OFFSET };
+  updateCursor(pressAt, 'press');
+  try {
+    navigator.vibrate?.(12);
+  } catch {
+    /* 振動できない端末は無視 */
+  }
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   const p = localPos(e);
-  pointers.set(e.pointerId, { x: p.x, y: p.y, sx: p.x, sy: p.y, type: e.pointerType });
+  const ptr = { x: p.x, y: p.y, sx: p.x, sy: p.y, type: e.pointerType };
+  pointers.set(e.pointerId, ptr);
 
   if (pointers.size === 1) {
     gesture = 'none';
@@ -247,9 +300,18 @@ canvas.addEventListener('pointerdown', (e) => {
       gesture = 'pan';
       tapCandidate = false;
     }
+    // 指・ペンは長押しで吸着モード
+    if (e.pointerType !== 'mouse' && e.button === 0) {
+      cancelPress();
+      pressTimer = window.setTimeout(() => {
+        if (gesture === 'none' && pointers.size === 1) startPress(ptr);
+      }, PRESS_MS);
+    }
     updateCursor(p, e.pointerType);
   } else if (pointers.size === 2) {
+    cancelPress();
     gesture = 'pinch';
+    pressAt = null;
     tapCandidate = false;
     const [a, b] = twoPointers();
     pinchDist = Math.hypot(b.x - a.x, b.y - a.y);
@@ -284,12 +346,20 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
+  if (gesture === 'press') {
+    // 長押し中は画面を動かさず、カーソルだけ指に合わせて動かす
+    pressAt = { x: p.x, y: p.y - PRESS_OFFSET };
+    updateCursor(pressAt, 'press');
+    return;
+  }
+
   if (pointers.size === 1) {
     const moved = Math.hypot(p.x - ptr.sx, p.y - ptr.sy);
     const threshold = ptr.type === 'touch' ? 10 : 5;
     if (gesture === 'none' && moved > threshold) {
       gesture = 'pan';
       tapCandidate = false;
+      cancelPress();
     }
     if (gesture === 'pan') {
       view.panBy(dx, dy);
@@ -301,7 +371,13 @@ canvas.addEventListener('pointermove', (e) => {
 function endPointer(e: PointerEvent, allowTap: boolean) {
   const ptr = pointers.get(e.pointerId);
   if (!ptr) return;
-  if (allowTap && tapCandidate && pointers.size === 1) {
+  cancelPress();
+  if (gesture === 'press' && pressAt) {
+    // 長押しを離したところで確定（ルーペで見ていた吸着先）
+    const at = pressAt;
+    pressAt = null;
+    if (allowTap) handleTap(at, 'press');
+  } else if (allowTap && tapCandidate && pointers.size === 1) {
     handleTap({ x: ptr.x, y: ptr.y }, ptr.type);
   }
   pointers.delete(e.pointerId);
@@ -404,7 +480,7 @@ const actions: Record<string, () => void> = {
     if (drawing.entities.length === 0 && !drawing.grid && drawing.columns.length === 0) return;
     if (!clearArmed) {
       clearArmed = true;
-      clearBtn.textContent = 'もう一度で消去';
+      clearTitle.textContent = 'もう一度押すと全部消します';
       clearBtn.classList.add('danger');
       clearTimer = window.setTimeout(disarmClear, 3000);
       return;
@@ -433,12 +509,13 @@ const actions: Record<string, () => void> = {
 };
 
 const clearBtn = document.getElementById('btn-clear') as HTMLButtonElement;
+const clearTitle = clearBtn.querySelector('.menu-title') as HTMLElement;
 let clearArmed = false;
 let clearTimer = 0;
 function disarmClear() {
   clearArmed = false;
   clearTimeout(clearTimer);
-  clearBtn.textContent = '全消去';
+  clearTitle.textContent = '全消去';
   clearBtn.classList.remove('danger');
 }
 
@@ -487,8 +564,37 @@ function timestamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
+// ---------- 左上のメニュー ----------
+
+const menuBtn = document.getElementById('btn-menu') as HTMLButtonElement;
+const menuEl = document.getElementById('menu') as HTMLElement;
+
+function setMenu(open: boolean) {
+  menuEl.hidden = !open;
+  menuBtn.setAttribute('aria-expanded', String(open));
+  if (!open) disarmClear();
+}
+
+menuBtn.addEventListener('click', () => {
+  const open = menuEl.hidden;
+  if (open) showSheet(null);
+  setMenu(open);
+});
+
+// メニューの外を触ったら閉じる
+document.addEventListener('pointerdown', (e) => {
+  if (menuEl.hidden) return;
+  const t = e.target as Node;
+  if (!menuEl.contains(t) && !menuBtn.contains(t)) setMenu(false);
+});
+
 document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
-  btn.addEventListener('click', () => actions[btn.dataset.action!]?.());
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.action!;
+    actions[action]?.();
+    // 全消去の1回目（確認待ち）はメニューを開いたままにする
+    if (menuEl.contains(btn) && !(action === 'clear' && clearArmed)) setMenu(false);
+  });
 });
 
 gridSelect.addEventListener('change', () => {
@@ -500,6 +606,10 @@ window.addEventListener('keydown', (e) => {
   const tag = (e.target as HTMLElement | null)?.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
     if (e.key === 'Escape') showSheet(null);
+    return;
+  }
+  if (e.key === 'Escape' && !menuEl.hidden) {
+    setMenu(false);
     return;
   }
   if (e.key === 'Escape') actions.endChain();
