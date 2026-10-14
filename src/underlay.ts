@@ -18,7 +18,32 @@ export type Underlay = {
   visible: boolean;
   /** 濃さ 0.1〜1 */
   opacity: number;
+  /** 隠している画層（元の DXF の画層名） */
+  hiddenLayers?: string[];
 };
+
+// ---------- 画層 ----------
+
+let shownCache: { prims: Prim[]; key: string; list: Prim[] } | null = null;
+
+/** 表示している画層の図形だけ（隠した画層は描かない・吸着しない）。画層を変えない限り同じ配列を返す */
+export function shownPrims(u: Underlay): Prim[] {
+  const hidden = u.hiddenLayers ?? [];
+  if (hidden.length === 0) return u.prims;
+  const key = hidden.join('\u0000');
+  if (shownCache && shownCache.prims === u.prims && shownCache.key === key) return shownCache.list;
+  const set = new Set(hidden);
+  const list = u.prims.filter((p) => !set.has(p.layer));
+  shownCache = { prims: u.prims, key, list };
+  return list;
+}
+
+/** 下敷きの画層の一覧（図形の数が多い順） */
+export function underlayLayers(u: Underlay): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const p of u.prims) counts.set(p.layer, (counts.get(p.layer) ?? 0) + 1);
+  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
 
 const KEY = 'kenchiku-cad:underlay';
 
@@ -57,14 +82,15 @@ let shifted: { prims: Prim[]; dx: number; dy: number; list: SnapCandidate[] } | 
 
 /** 下敷きのスナップ候補（端点・円の中心・長い線どうしの交点）。ずらし量込み */
 export function underlaySnapCandidates(u: Underlay): SnapCandidate[] {
-  if (shifted && shifted.prims === u.prims && shifted.dx === u.dx && shifted.dy === u.dy) return shifted.list;
-  let raw = rawCache.get(u.prims);
+  const prims = shownPrims(u);
+  if (shifted && shifted.prims === prims && shifted.dx === u.dx && shifted.dy === u.dy) return shifted.list;
+  let raw = rawCache.get(prims);
   if (!raw) {
-    raw = rawCandidates(u.prims);
-    rawCache.set(u.prims, raw);
+    raw = rawCandidates(prims);
+    rawCache.set(prims, raw);
   }
   const list = raw.map((c) => ({ p: { x: c.p.x + u.dx, y: c.p.y + u.dy }, kind: c.kind }));
-  shifted = { prims: u.prims, dx: u.dx, dy: u.dy, list };
+  shifted = { prims, dx: u.dx, dy: u.dy, list };
   return list;
 }
 
@@ -127,19 +153,21 @@ let segCache: { prims: Prim[]; dx: number; dy: number; list: Segment[] } | null 
 let curveCache: { prims: readonly Prim[]; dx: number; dy: number; list: Curve[] } | null = null;
 /** 下敷きの円・円弧（位置合わせ量を足したもの。線上スナップと「測る」の円・円弧用） */
 export function underlayCurves(u: Underlay): Curve[] {
-  if (curveCache && curveCache.prims === u.prims && curveCache.dx === u.dx && curveCache.dy === u.dy) return curveCache.list;
-  const list = primCurves(u.prims, u.dx, u.dy);
-  curveCache = { prims: u.prims, dx: u.dx, dy: u.dy, list };
+  const prims = shownPrims(u);
+  if (curveCache && curveCache.prims === prims && curveCache.dx === u.dx && curveCache.dy === u.dy) return curveCache.list;
+  const list = primCurves(prims, u.dx, u.dy);
+  curveCache = { prims, dx: u.dx, dy: u.dy, list };
   return list;
 }
 
 export function underlaySegments(u: Underlay): Segment[] {
-  if (segCache && segCache.prims === u.prims && segCache.dx === u.dx && segCache.dy === u.dy) return segCache.list;
+  const prims = shownPrims(u);
+  if (segCache && segCache.prims === prims && segCache.dx === u.dx && segCache.dy === u.dy) return segCache.list;
   const list: Segment[] = [];
-  for (const p of u.prims) {
+  for (const p of prims) {
     if (p.t === 'line') list.push({ a: { x: p.a.x + u.dx, y: p.a.y + u.dy }, b: { x: p.b.x + u.dx, y: p.b.y + u.dy } });
   }
-  segCache = { prims: u.prims, dx: u.dx, dy: u.dy, list };
+  segCache = { prims, dx: u.dx, dy: u.dy, list };
   return list;
 }
 
@@ -153,13 +181,14 @@ export function renderUnderlay(ctx: CanvasRenderingContext2D, w: number, h: numb
   ctx.fillStyle = color;
   ctx.lineWidth = 1;
   ctx.setLineDash([]);
+  const prims = shownPrims(u);
   const S = (p: Vec2) => view.toScreen({ x: p.x + u.dx, y: p.y + u.dy });
   const out = (a: Vec2, b: Vec2) =>
     (a.x < 0 && b.x < 0) || (a.x > w && b.x > w) || (a.y < 0 && b.y < 0) || (a.y > h && b.y > h);
 
   // 線はまとめて1回で描く（数千本でも軽い）
   ctx.beginPath();
-  for (const p of u.prims) {
+  for (const p of prims) {
     if (p.t !== 'line') continue;
     const a = S(p.a);
     const b = S(p.b);
@@ -169,7 +198,7 @@ export function renderUnderlay(ctx: CanvasRenderingContext2D, w: number, h: numb
   }
   ctx.stroke();
 
-  for (const p of u.prims) {
+  for (const p of prims) {
     if (p.t === 'circle' || p.t === 'arc') {
       const c = S(p.c);
       const r = p.r * view.scale;

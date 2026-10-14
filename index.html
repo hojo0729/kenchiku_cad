@@ -18,6 +18,9 @@
           <button id="menu-underlay" data-action="underlayPanel" role="menuitem">
             <span class="menu-title">下敷き</span><span class="menu-sub">設計図のDXFを読み込む・位置合わせ</span>
           </button>
+          <button id="menu-layers" data-action="layerPanel" role="menuitem">
+            <span class="menu-title">レイヤー</span><span class="menu-sub">自分の図面・下敷きのレイヤーごとに表示/非表示</span>
+          </button>
           <button id="menu-dxf" data-action="exportDxf" role="menuitem">
             <span class="menu-title">保存（DXF）</span><span class="menu-sub">Jw_cad で開ける。このアプリで開けば続きを編集できる</span>
           </button>
@@ -118,6 +121,23 @@
             <button type="button" id="grid-close">閉じる</button>
           </div>
         </form>
+      </section>
+      <section id="layer-sheet" class="sheet" hidden aria-label="レイヤー">
+        <div class="sheet-body">
+          <h2>レイヤー</h2>
+          <p class="hint">チェックを外したレイヤーは画面に出ず、吸着もしません。DXF の保存には全部のレイヤーが入ります。</p>
+          <h3 class="layer-head">自分の図面</h3>
+          <div id="layer-own" class="layer-list"></div>
+          <h3 class="layer-head">下敷き<span id="layer-ul-name" class="layer-file"></span></h3>
+          <div class="sheet-actions" id="layer-ul-actions">
+            <button type="button" id="layer-ul-all">全部表示</button>
+            <button type="button" id="layer-ul-none">全部隠す</button>
+          </div>
+          <div id="layer-ul" class="layer-list"></div>
+          <div class="sheet-actions">
+            <button type="button" id="layer-close">閉じる</button>
+          </div>
+        </div>
       </section>
       <section id="ul-sheet" class="sheet" hidden aria-label="下敷きの設定">
         <div class="sheet-body">

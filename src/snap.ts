@@ -1,5 +1,5 @@
 import type { Drawing, Vec2 } from './model';
-import { distance } from './model';
+import { distance, LAYER_COLUMN, LAYER_GRID, LAYER_WALL } from './model';
 import { gridIntersections } from './arch/grid';
 import { columnCorners } from './arch/column';
 import { wallCorners } from './arch/wall';
@@ -19,11 +19,13 @@ export function snapCandidates(
   more: readonly SnapCandidate[] = [],
 ): SnapCandidate[] {
   const out: SnapCandidate[] = [...more];
-  if (drawing.grid) for (const p of gridIntersections(drawing.grid)) out.push({ p, kind: 'intersection' });
-  for (const p of columnCorners(drawing)) out.push({ p, kind: 'endpoint' });
-  for (const p of wallCorners(drawing)) out.push({ p, kind: 'endpoint' });
+  // 隠している画層には吸着しない
+  const hidden = new Set(drawing.hiddenLayers ?? []);
+  if (drawing.grid && !hidden.has(LAYER_GRID)) for (const p of gridIntersections(drawing.grid)) out.push({ p, kind: 'intersection' });
+  if (!hidden.has(LAYER_COLUMN)) for (const p of columnCorners(drawing)) out.push({ p, kind: 'endpoint' });
+  if (!hidden.has(LAYER_WALL)) for (const p of wallCorners(drawing)) out.push({ p, kind: 'endpoint' });
   for (const e of drawing.entities) {
-    if (e.kind === 'line') {
+    if (e.kind === 'line' && !hidden.has(e.layer)) {
       out.push({ p: e.a, kind: 'endpoint' });
       out.push({ p: e.b, kind: 'endpoint' });
     }

@@ -142,6 +142,8 @@ export type Drawing = {
   openings: Opening[];
   /** 柱・壁の寄り寸法（通り芯から各面まで）を描くか */
   showOffsetDims: boolean;
+  /** 画面で隠している画層（DXF には全部出す） */
+  hiddenLayers?: string[];
 };
 
 export const LAYER_GRID = 'GRID';

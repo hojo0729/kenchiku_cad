@@ -10,7 +10,7 @@ import { beamRect, gridSpans, nextBeamMark, nextWallMark, openingRange, spanName
 import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
 import { decodeDxf, readDxf } from './import/dxf-read';
 import { drawingFromJson, extractEmbedded, isZip, unzipFirst } from './export/native';
-import { loadUnderlay, saveUnderlay, underlayCurves, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
+import { loadUnderlay, saveUnderlay, underlayLayers, underlayCurves, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
 import { toDxfBytes } from './export/dxf';
 import { zipStore } from './export/zip';
@@ -147,7 +147,7 @@ function frame() {
     cssW,
     cssH,
     {
-      prims: decompose(drawing),
+      prims: ownPrims(),
       view,
       grid,
       centerPattern: centerPattern(drawing.scale),
@@ -311,9 +311,18 @@ function snapRadiusPx(type: string) {
 }
 
 /** 線上スナップの対象: 自分の図面の線（寸法線を除く）と下敷きの線 */
+/** 自分の図面のうち、表示しているレイヤーの図形（隠したレイヤーは描かない・吸着しない） */
+function ownPrims() {
+  const all = decompose(drawing);
+  const hidden = drawing.hiddenLayers ?? [];
+  if (hidden.length === 0) return all;
+  const set = new Set(hidden);
+  return all.filter((p) => !set.has(p.layer));
+}
+
 function ownSegments(): Segment[] {
   const out: Segment[] = [];
-  for (const p of decompose(drawing)) {
+  for (const p of ownPrims()) {
     if (p.t === 'line' && p.layer !== LAYER_DIM && p.layer !== LAYER_DIM_OFFSET) out.push({ a: p.a, b: p.b });
   }
   return out;
@@ -649,6 +658,10 @@ const actions: Record<string, () => void> = {
     syncGridForm();
     showSheet(sheet);
   },
+  layerPanel() {
+    renderLayerPanel();
+    showSheet(layerSheet);
+  },
   underlayPanel() {
     syncUnderlayForm();
     if (inAndroidApp && !ulMsg.textContent) ulMsg.textContent = APP_HINT;
@@ -983,7 +996,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -1505,7 +1518,7 @@ document.getElementById('off-close')!.addEventListener('click', () => showSheet(
 /** オフセットの元にできる線: 自分の線・通り芯・柱の辺・下敷きの線（寸法線は除く） */
 function offsetSources(): Segment[] {
   const segs: Segment[] = [];
-  for (const p of decompose(drawing)) if (p.t === 'line' && p.layer !== LAYER_DIM && p.layer !== LAYER_DIM_OFFSET) segs.push({ a: p.a, b: p.b });
+  for (const p of ownPrims()) if (p.t === 'line' && p.layer !== LAYER_DIM && p.layer !== LAYER_DIM_OFFSET) segs.push({ a: p.a, b: p.b });
   if (underlay?.visible) for (const s of underlaySegments(underlay)) segs.push(s);
   return segs;
 }
@@ -2086,6 +2099,100 @@ function openingTap(screen: Vec2, type: string) {
   });
   flash(`開口 幅${formatDim(width)} を入れました（タップで位置・幅を変更）`);
 }
+
+// ---------- レイヤー ----------
+
+const layerSheet = document.getElementById('layer-sheet') as HTMLElement;
+const layerOwnEl = document.getElementById('layer-own') as HTMLElement;
+const layerUlEl = document.getElementById('layer-ul') as HTMLElement;
+const layerUlName = document.getElementById('layer-ul-name') as HTMLElement;
+const layerUlActions = document.getElementById('layer-ul-actions') as HTMLElement;
+
+/** 自分の図面のレイヤーの表示名（DXF の画層名は右に小さく出す） */
+const OWN_LAYER_LABEL: Record<string, string> = {
+  GRID: '通り芯',
+  DIM: '通り芯の寸法',
+  DIM_OFFSET: '寄り寸法',
+  COLUMN: '柱',
+  WALL: '壁',
+  BEAM: '梁',
+  OPENING: '開口の表記',
+  '0': '線',
+};
+
+function layerRow(label: string, meta: string, checked: boolean, onChange: (on: boolean) => void): HTMLLabelElement {
+  const row = document.createElement('label');
+  row.className = 'layer-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = checked;
+  box.addEventListener('change', () => onChange(box.checked));
+  const name = document.createElement('span');
+  name.className = 'layer-label';
+  name.textContent = label;
+  const m = document.createElement('span');
+  m.className = 'layer-meta';
+  m.textContent = meta;
+  row.append(box, name, m);
+  return row;
+}
+
+function toggleIn(list: string[] | undefined, name: string, show: boolean): string[] {
+  const set = new Set(list ?? []);
+  if (show) set.delete(name);
+  else set.add(name);
+  return [...set];
+}
+
+function renderLayerPanel() {
+  // 自分の図面: 決まったレイヤー＋実際に使っているレイヤー
+  const counts = new Map<string, number>();
+  for (const p of decompose(drawing)) counts.set(p.layer, (counts.get(p.layer) ?? 0) + 1);
+  const names = [...new Set([...Object.keys(OWN_LAYER_LABEL), ...counts.keys()])];
+  layerOwnEl.replaceChildren(
+    ...names.map((n) =>
+      layerRow(OWN_LAYER_LABEL[n] ?? n, `${n}・${counts.get(n) ?? 0}`, !(drawing.hiddenLayers ?? []).includes(n), (on) => {
+        drawing.hiddenLayers = toggleIn(drawing.hiddenLayers, n, on);
+        saveDrawing();
+        requestRender();
+      }),
+    ),
+  );
+
+  // 下敷き: 元の DXF の画層（図形が多い順）
+  layerUlActions.hidden = !underlay;
+  layerUlName.textContent = underlay ? underlay.name : '（読み込んでいません）';
+  if (!underlay) {
+    layerUlEl.replaceChildren();
+    return;
+  }
+  const u = underlay;
+  layerUlEl.replaceChildren(
+    ...underlayLayers(u).map(({ name, count }) =>
+      layerRow(name, String(count), !(u.hiddenLayers ?? []).includes(name), (on) => {
+        u.hiddenLayers = toggleIn(u.hiddenLayers, name, on);
+        saveUnderlay(u);
+        requestRender();
+      }),
+    ),
+  );
+}
+
+document.getElementById('layer-ul-all')!.addEventListener('click', () => {
+  if (!underlay) return;
+  underlay.hiddenLayers = [];
+  saveUnderlay(underlay);
+  renderLayerPanel();
+  requestRender();
+});
+document.getElementById('layer-ul-none')!.addEventListener('click', () => {
+  if (!underlay) return;
+  underlay.hiddenLayers = underlayLayers(underlay).map((l) => l.name);
+  saveUnderlay(underlay);
+  renderLayerPanel();
+  requestRender();
+});
+document.getElementById('layer-close')!.addEventListener('click', () => showSheet(null));
 
 // 開発時だけ、自動テストから状態を見られるようにする（本番ビルドでは消える）
 if (import.meta.env.DEV) {

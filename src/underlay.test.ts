@@ -26,3 +26,24 @@ describe('下敷きのスナップ候補', () => {
     expect(rawCandidates(prims).filter((c) => c.p.x === 10 && c.p.y === 0)).toHaveLength(1);
   });
 });
+
+describe('下敷きのレイヤー', async () => {
+  const { shownPrims, underlayLayers, underlaySegments } = await import('./underlay');
+  const prims = [
+    { t: 'line' as const, layer: '躯体', a: { x: 0, y: 0 }, b: { x: 1000, y: 0 } },
+    { t: 'line' as const, layer: '躯体', a: { x: 0, y: 0 }, b: { x: 0, y: 1000 } },
+    { t: 'line' as const, layer: '家具', a: { x: 0, y: 0 }, b: { x: 500, y: 500 } },
+  ];
+  it('図形の多い順に一覧、隠した画層は描かない・吸着しない', () => {
+    const u = { name: 't', prims, dx: 0, dy: 0, visible: true, opacity: 1, hiddenLayers: ['家具'] };
+    expect(underlayLayers(u)).toEqual([
+      { name: '躯体', count: 2 },
+      { name: '家具', count: 1 },
+    ]);
+    expect(shownPrims(u)).toHaveLength(2);
+    expect(shownPrims(u)).toBe(shownPrims(u)); // 同じ配列（キャッシュが効く）
+    expect(underlaySegments(u)).toHaveLength(2);
+    u.hiddenLayers = [];
+    expect(underlaySegments(u)).toHaveLength(3);
+  });
+});
