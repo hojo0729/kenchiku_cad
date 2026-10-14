@@ -7,6 +7,9 @@
 
 let table: Map<string, number> | null = null;
 
+/** 読めなかった文字（U+FFFD）。ビルド後のファイルにこの文字そのものを残さないよう、コードで比べる */
+const REPLACEMENT = 0xfffd;
+
 function buildTable(): Map<string, number> {
   const map = new Map<string, number>();
   const leads: number[] = [];
@@ -21,19 +24,19 @@ function buildTable(): Map<string, number> {
       codes.push((lead << 8) | trail);
     }
   }
-  // まとめて1回で読む（1文字ずつより速い）。読めない組は U+FFFD になる
+  // まとめて1回で読む（1文字ずつより速い）。読めない組は REPLACEMENT になる
   const text = new TextDecoder('shift_jis').decode(new Uint8Array(bytes));
   const chars = [...text];
   if (chars.length === codes.length) {
     chars.forEach((ch, i) => {
-      if (ch !== '�' && !map.has(ch)) map.set(ch, codes[i]);
+      if (ch.charCodeAt(0) !== REPLACEMENT && !map.has(ch)) map.set(ch, codes[i]);
     });
   } else {
     // 念のため: 長さが合わないときは1文字ずつ
     const dec = new TextDecoder('shift_jis');
     for (const code of codes) {
       const ch = dec.decode(new Uint8Array([code >> 8, code & 0xff]));
-      if (ch.length === 1 && ch !== '�' && !map.has(ch)) map.set(ch, code);
+      if (ch.length === 1 && ch.charCodeAt(0) !== REPLACEMENT && !map.has(ch)) map.set(ch, code);
     }
   }
   // 半角カナ（1バイト）
