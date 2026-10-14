@@ -37,6 +37,36 @@ export type StructuralGrid = {
   origin: Vec2;
 };
 
+/**
+ * 柱の符号（部材リスト）。C1 = 800×800 のように大きさを決める。
+ * 符号の大きさを直すと、その符号の柱が図面上で全部変わる。
+ */
+export type ColumnType = {
+  id: string;
+  mark: string;
+  /** X方向の幅(mm) */
+  bx: number;
+  /** Y方向の幅(mm) */
+  by: number;
+};
+
+/**
+ * 配置した柱。通り芯の交点（何本目のX通り・Y通りか）に紐づくので、スパンを変えると一緒に動く。
+ * 寄りは「通り芯から柱面まで」の距離。null は振り分け（芯が柱の中心）。
+ */
+export type Column = {
+  id: string;
+  typeId: string;
+  /** X通りの番号（0 = X1） */
+  xi: number;
+  /** Y通りの番号（0 = Y1） */
+  yi: number;
+  /** X通りから柱の左面まで(mm) */
+  left: number | null;
+  /** Y通りから柱の下面まで(mm) */
+  bottom: number | null;
+};
+
 export type Drawing = {
   version: 1;
   units: 'mm';
@@ -45,16 +75,20 @@ export type Drawing = {
   layers: Layer[];
   entities: Entity[];
   grid?: StructuralGrid;
+  columnTypes: ColumnType[];
+  columns: Column[];
 };
 
 export const LAYER_GRID = 'GRID';
 export const LAYER_DIM = 'DIM';
+export const LAYER_COLUMN = 'COLUMN';
 
 export function defaultLayers(): Layer[] {
   return [
     { name: '0', color: 7 },
     { name: LAYER_GRID, color: 1, linetype: 'CENTER' },
     { name: LAYER_DIM, color: 3 },
+    { name: LAYER_COLUMN, color: 4 },
   ];
 }
 
@@ -65,6 +99,8 @@ export function createDrawing(): Drawing {
     scale: 50,
     layers: defaultLayers(),
     entities: [],
+    columnTypes: [{ id: 'ct1', mark: 'C1', bx: 800, by: 800 }],
+    columns: [],
   };
 }
 
@@ -76,6 +112,8 @@ export function normalizeDrawing(d: Drawing): Drawing {
   out.layers = [...(out.layers ?? [])];
   for (const l of defaultLayers()) if (!have.has(l.name)) out.layers.push(l);
   out.entities = out.entities ?? [];
+  out.columnTypes = out.columnTypes?.length ? out.columnTypes : [{ id: 'ct1', mark: 'C1', bx: 800, by: 800 }];
+  out.columns = out.columns ?? [];
   return out;
 }
 

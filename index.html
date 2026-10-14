@@ -15,6 +15,7 @@
       </main>
       <nav class="toolbar" aria-label="ツール">
         <button id="btn-gridline" data-action="gridPanel">通り芯</button>
+        <button id="btn-column" data-action="column" class="tool">柱</button>
         <button id="btn-line" data-action="line" class="tool active">線</button>
         <button id="btn-end" data-action="endChain">線を終了</button>
         <button id="btn-undo" data-action="undo">戻す</button>
@@ -59,6 +60,35 @@
             <button type="submit" id="grid-apply" class="primary">描く</button>
             <button type="button" id="grid-remove">通り芯を消す</button>
             <button type="button" id="grid-close">閉じる</button>
+          </div>
+        </form>
+      </section>
+      <section id="col-sheet" class="sheet" hidden aria-label="柱の設定">
+        <form id="col-form" class="sheet-body" novalidate>
+          <h2 id="col-title">柱</h2>
+          <p class="hint">符号ごとに大きさを決めます。ここを直すと、その符号の柱が図面上で全部変わります。</p>
+          <div id="col-types" class="type-list" role="radiogroup" aria-label="柱の符号"></div>
+          <div class="sheet-actions">
+            <button type="button" id="col-type-add">符号を追加</button>
+          </div>
+          <fieldset class="group">
+            <legend>寄り（通り芯から柱面まで、mm）</legend>
+            <label class="field inline" for="col-left">
+              <span>X通り → 左面</span>
+              <input id="col-left" type="text" inputmode="decimal" autocomplete="off" placeholder="振り分け" />
+            </label>
+            <label class="field inline" for="col-bottom">
+              <span>Y通り → 下面</span>
+              <input id="col-bottom" type="text" inputmode="decimal" autocomplete="off" placeholder="振り分け" />
+            </label>
+            <p class="hint">空欄は振り分け（通り芯が柱の中心）。例: 800角で X通り→左面 300 なら、右面まで 500。</p>
+          </fieldset>
+          <p id="col-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="col-ok" class="primary">交点をタップして配置</button>
+            <button type="button" id="col-all">全交点に配置</button>
+            <button type="button" id="col-delete" hidden>この柱を削除</button>
+            <button type="button" id="col-close">閉じる</button>
           </div>
         </form>
       </section>

@@ -1,5 +1,6 @@
 import type { Drawing, Vec2 } from '../model';
 import { decomposeGrid } from './grid';
+import { decomposeColumns } from './column';
 
 /**
  * 図面を構成する最小単位。画面描画と DXF/JWW 書き出しはこれだけを扱う。
@@ -31,6 +32,7 @@ export function centerPattern(scale: number): number[] {
 export function decompose(drawing: Drawing): Prim[] {
   const prims: Prim[] = [];
   if (drawing.grid) prims.push(...decomposeGrid(drawing.grid, drawing.scale));
+  prims.push(...decomposeColumns(drawing));
   for (const e of drawing.entities) {
     if (e.kind === 'line') prims.push({ t: 'line', layer: e.layer, a: e.a, b: e.b });
   }

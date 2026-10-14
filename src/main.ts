@@ -3,6 +3,7 @@ import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type SnapResult } from './snap';
 import { centerPattern, decompose, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
+import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { readTheme, render, type Theme } from './renderer';
 import { toDxf } from './export/dxf';
 import { zipStore } from './export/zip';
@@ -22,6 +23,8 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
+let mode: 'line' | 'column' = 'line';
+let currentTypeId = drawing.columnTypes[0].id;
 let cursor: SnapResult | null = null;
 let theme: Theme = readTheme();
 let cssW = 0;
@@ -47,6 +50,19 @@ function loadDrawing(): Drawing {
 function sampleDrawing(): Drawing {
   const d = createDrawing();
   d.grid = { xSpans: [6000, 7200, 6000], ySpans: [6500, 6500], xPrefix: 'X', yPrefix: 'Y', origin: { x: 0, y: 0 } };
+  // 柱: 内柱は C1（800角・振り分け）、外周は C2（700角・外面合わせ）の例
+  d.columnTypes = [
+    { id: 'ct1', mark: 'C1', bx: 800, by: 800 },
+    { id: 'ct2', mark: 'C2', bx: 700, by: 700 },
+  ];
+  for (let xi = 0; xi < 4; xi++) {
+    for (let yi = 0; yi < 3; yi++) {
+      const edgeX = xi === 0 ? 150 : xi === 3 ? 550 : null; // 外面を通り芯から 150 外へ
+      const edgeY = yi === 0 ? 150 : yi === 2 ? 550 : null;
+      const inner = edgeX === null && edgeY === null;
+      d.columns.push({ id: newId(), typeId: inner ? 'ct1' : 'ct2', xi, yi, left: edgeX, bottom: edgeY });
+    }
+  }
   isSample = true;
   return d;
 }
@@ -130,8 +146,15 @@ function updateStatus() {
     statusEl.textContent = flashMsg;
     return;
   }
+  if (mode === 'column') {
+    const t = drawing.columnTypes.find((c) => c.id === currentTypeId);
+    statusEl.textContent = drawing.grid
+      ? `柱 ${t ? `${t.mark}（${t.bx}×${t.by}）` : ''}: 交点をタップで配置／柱をタップで編集`
+      : '柱を置くには、先に「通り芯」を描いてください';
+    return;
+  }
   if (isSample && !pending) {
-    statusEl.textContent = 'サンプルの通り芯を表示中。「通り芯」でスパンを変更できます';
+    statusEl.textContent = 'サンプル（通り芯と柱）を表示中。「柱」で符号の大きさを変えられます';
     return;
   }
   const parts: string[] = [];
@@ -287,6 +310,10 @@ canvas.addEventListener(
 );
 
 function handleTap(screen: Vec2, type: string) {
+  if (mode === 'column') {
+    columnTap(screen, type);
+    return;
+  }
   updateCursor(screen, type);
   if (!cursor) return;
   const pt = { ...cursor.point };
@@ -306,7 +333,11 @@ function handleTap(screen: Vec2, type: string) {
 
 const actions: Record<string, () => void> = {
   line() {
-    /* 現状は線ツールのみ */
+    setMode('line');
+  },
+  column() {
+    setMode('column');
+    openColumnSheet(null);
   },
   endChain() {
     pending = null;
@@ -316,7 +347,9 @@ const actions: Record<string, () => void> = {
     const prev = history.pop();
     if (!prev) return;
     drawing = prev;
+    if (!drawing.columnTypes.some((t) => t.id === currentTypeId)) currentTypeId = drawing.columnTypes[0].id;
     syncGridForm();
+    if (!colSheet.hidden) renderColumnTypes();
     pending = null;
     saveDrawing();
     requestRender();
@@ -327,7 +360,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0 && !drawing.grid) return;
+    if (drawing.entities.length === 0 && !drawing.grid && drawing.columns.length === 0) return;
     if (!clearArmed) {
       clearArmed = true;
       clearBtn.textContent = 'もう一度で消去';
@@ -339,6 +372,7 @@ const actions: Record<string, () => void> = {
     commit(() => {
       drawing.entities = [];
       drawing.grid = undefined;
+      drawing.columns = [];
     });
     syncGridForm();
     pending = null;
@@ -349,8 +383,7 @@ const actions: Record<string, () => void> = {
   },
   gridPanel() {
     syncGridForm();
-    sheet.hidden = false;
-    gridX.focus();
+    showSheet(sheet);
   },
 };
 
@@ -421,7 +454,7 @@ gridSelect.addEventListener('change', () => {
 window.addEventListener('keydown', (e) => {
   const tag = (e.target as HTMLElement | null)?.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
-    if (e.key === 'Escape') sheet.hidden = true;
+    if (e.key === 'Escape') showSheet(null);
     return;
   }
   if (e.key === 'Escape') actions.endChain();
@@ -486,8 +519,10 @@ document.getElementById('grid-form')!.addEventListener('submit', (e) => {
       yPrefix: 'Y',
       origin: drawing.grid?.origin ?? { x: 0, y: 0 },
     };
+    // 通り芯が減ったら、無くなった交点の柱も消す
+    drawing.columns = drawing.columns.filter((c) => c.xi <= xs.length && c.yi <= ys.length);
   });
-  sheet.hidden = true;
+  showSheet(null);
   fitView();
   const { xs: px, ys: py } = gridPositions(drawing.grid!);
   flash(`通り芯を描きました（X ${px.length}本・Y ${py.length}本、1/${scale}）`);
@@ -495,18 +530,321 @@ document.getElementById('grid-form')!.addEventListener('submit', (e) => {
 
 document.getElementById('grid-remove')!.addEventListener('click', () => {
   if (!drawing.grid) {
-    sheet.hidden = true;
+    showSheet(null);
     return;
   }
   commit(() => {
     drawing.grid = undefined;
+    drawing.columns = [];
   });
-  sheet.hidden = true;
+  showSheet(null);
   flash('通り芯を消しました（「戻す」で元に戻せます）');
 });
 
-document.getElementById('grid-close')!.addEventListener('click', () => {
-  sheet.hidden = true;
+document.getElementById('grid-close')!.addEventListener('click', () => showSheet(null));
+
+// ---------- シート（下から出るパネル） ----------
+
+function showSheet(target: HTMLElement | null) {
+  for (const el of [sheet, colSheet]) el.hidden = el !== target;
+  requestRender();
+}
+
+function setMode(next: 'line' | 'column') {
+  mode = next;
+  pending = null;
+  document.getElementById('btn-line')!.classList.toggle('active', next === 'line');
+  document.getElementById('btn-column')!.classList.toggle('active', next === 'column');
+  requestRender();
+}
+
+// ---------- 柱 ----------
+
+const colSheet = document.getElementById('col-sheet') as HTMLElement;
+const colTitle = document.getElementById('col-title') as HTMLElement;
+const colTypes = document.getElementById('col-types') as HTMLElement;
+const colLeft = document.getElementById('col-left') as HTMLInputElement;
+const colBottom = document.getElementById('col-bottom') as HTMLInputElement;
+const colMsg = document.getElementById('col-msg') as HTMLElement;
+const colOk = document.getElementById('col-ok') as HTMLButtonElement;
+const colAll = document.getElementById('col-all') as HTMLButtonElement;
+const colDelete = document.getElementById('col-delete') as HTMLButtonElement;
+
+/** 編集中の柱（null なら「配置」モード） */
+let colEditId: string | null = null;
+/** 配置時の寄り（入力欄の文字のまま覚えておく） */
+let placeLeft = '';
+let placeBottom = '';
+
+function parseOffset(text: string): number | null | undefined {
+  const t = text.normalize('NFKC').trim();
+  if (t === '') return null;
+  const v = Number(t);
+  return Number.isFinite(v) ? v : undefined;
+}
+
+function editingColumn() {
+  return colEditId ? drawing.columns.find((c) => c.id === colEditId) : undefined;
+}
+
+function openColumnSheet(columnId: string | null) {
+  colEditId = columnId;
+  const col = editingColumn();
+  colMsg.textContent = '';
+  if (col) {
+    colTitle.textContent = `柱（${intersectionName(drawing, col.xi, col.yi)}）`;
+    colLeft.value = col.left === null ? '' : String(col.left);
+    colBottom.value = col.bottom === null ? '' : String(col.bottom);
+    colOk.textContent = '変更を反映';
+    colAll.hidden = true;
+    colDelete.hidden = false;
+  } else {
+    colTitle.textContent = '柱';
+    colLeft.value = placeLeft;
+    colBottom.value = placeBottom;
+    colOk.textContent = '交点をタップして配置';
+    colAll.hidden = false;
+    colDelete.hidden = true;
+  }
+  renderColumnTypes();
+  showSheet(colSheet);
+}
+
+function renderColumnTypes() {
+  const col = editingColumn();
+  const selectedId = col ? col.typeId : currentTypeId;
+  colTypes.replaceChildren();
+  for (const t of drawing.columnTypes) {
+    const count = drawing.columns.filter((c) => c.typeId === t.id).length;
+    const row = document.createElement('div');
+    row.className = 'type-row' + (t.id === selectedId ? ' selected' : '');
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'coltype';
+    radio.id = `coltype-${t.id}`;
+    radio.checked = t.id === selectedId;
+    radio.setAttribute('aria-label', `${t.mark} を使う`);
+    radio.addEventListener('change', () => selectColumnType(t.id));
+
+    const mark = textInput(`colmark-${t.id}`, t.mark, 'mark', '符号');
+    const bx = textInput(`colbx-${t.id}`, String(t.bx), 'size', 'X方向の幅');
+    const by = textInput(`colby-${t.id}`, String(t.by), 'size', 'Y方向の幅');
+    bx.inputMode = 'numeric';
+    by.inputMode = 'numeric';
+    const times = document.createElement('span');
+    times.className = 'times';
+    times.textContent = '×';
+    const cnt = document.createElement('span');
+    cnt.className = 'count';
+    cnt.textContent = `${count}本`;
+
+    const apply = () => updateColumnType(t.id, mark.value, bx.value, by.value);
+    for (const el of [mark, bx, by]) {
+      el.addEventListener('change', apply);
+      el.addEventListener('focus', () => selectColumnType(t.id, false));
+    }
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = '削除';
+    del.setAttribute('aria-label', `${t.mark} を削除`);
+    del.addEventListener('click', () => deleteColumnType(t.id));
+
+    row.append(radio, mark, bx, times, by, cnt, del);
+    colTypes.append(row);
+  }
+}
+
+function textInput(id: string, value: string, cls: string, label: string) {
+  const el = document.createElement('input');
+  el.type = 'text';
+  el.id = id;
+  el.value = value;
+  el.className = cls;
+  el.autocomplete = 'off';
+  el.setAttribute('aria-label', label);
+  return el;
+}
+
+function selectColumnType(id: string, rerender = true) {
+  const col = editingColumn();
+  if (col) {
+    if (col.typeId !== id) {
+      commit(() => {
+        col.typeId = id;
+      });
+    }
+  } else {
+    currentTypeId = id;
+  }
+  if (rerender) renderColumnTypes();
+  else
+    colTypes.querySelectorAll('.type-row').forEach((row, i) => {
+      const on = drawing.columnTypes[i]?.id === id;
+      row.classList.toggle('selected', on);
+      (row.querySelector('input[type="radio"]') as HTMLInputElement).checked = on;
+    });
+  requestRender();
+}
+
+function updateColumnType(id: string, markText: string, bxText: string, byText: string) {
+  const mark = markText.normalize('NFKC').trim();
+  const bx = Number(bxText.normalize('NFKC'));
+  const by = Number(byText.normalize('NFKC'));
+  if (!mark) {
+    colMsg.textContent = '符号を入力してください（例: C1）';
+    renderColumnTypes();
+    return;
+  }
+  if (drawing.columnTypes.some((t) => t.id !== id && t.mark === mark)) {
+    colMsg.textContent = `符号 ${mark} はもう使われています`;
+    renderColumnTypes();
+    return;
+  }
+  if (!(bx > 0) || !(by > 0)) {
+    colMsg.textContent = '柱の大きさは 0 より大きい数字で入力してください';
+    renderColumnTypes();
+    return;
+  }
+  colMsg.textContent = '';
+  const t = drawing.columnTypes.find((c) => c.id === id);
+  if (!t || (t.mark === mark && t.bx === bx && t.by === by)) return;
+  commit(() => {
+    t.mark = mark;
+    t.bx = bx;
+    t.by = by;
+  });
+  const count = drawing.columns.filter((c) => c.typeId === id).length;
+  if (count) flash(`${mark} の柱 ${count}本を ${bx}×${by} に変更しました`);
+  renderColumnTypes();
+}
+
+function deleteColumnType(id: string) {
+  const t = drawing.columnTypes.find((c) => c.id === id);
+  if (!t) return;
+  if (drawing.columns.some((c) => c.typeId === id)) {
+    colMsg.textContent = `${t.mark} は図面で使われているので削除できません。先にその柱を消してください`;
+    return;
+  }
+  if (drawing.columnTypes.length === 1) {
+    colMsg.textContent = '符号は最低1つ必要です';
+    return;
+  }
+  commit(() => {
+    drawing.columnTypes = drawing.columnTypes.filter((c) => c.id !== id);
+  });
+  if (currentTypeId === id) currentTypeId = drawing.columnTypes[0].id;
+  colMsg.textContent = '';
+  renderColumnTypes();
+}
+
+document.getElementById('col-type-add')!.addEventListener('click', () => {
+  const t = { id: newId(), mark: nextColumnMark(drawing.columnTypes), bx: 800, by: 800 };
+  commit(() => {
+    drawing.columnTypes.push(t);
+  });
+  selectColumnType(t.id);
 });
+
+document.getElementById('col-form')!.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const left = parseOffset(colLeft.value);
+  const bottom = parseOffset(colBottom.value);
+  if (left === undefined || bottom === undefined) {
+    colMsg.textContent = '寄りは数字で入力してください（空欄なら振り分け）';
+    return;
+  }
+  const col = editingColumn();
+  if (col) {
+    if (col.left !== left || col.bottom !== bottom) {
+      commit(() => {
+        col.left = left;
+        col.bottom = bottom;
+      });
+    }
+    flash(`${intersectionName(drawing, col.xi, col.yi)} の柱を変更しました`);
+  } else {
+    placeLeft = colLeft.value;
+    placeBottom = colBottom.value;
+    setMode('column');
+  }
+  showSheet(null);
+});
+
+colAll.addEventListener('click', () => {
+  if (!drawing.grid) {
+    colMsg.textContent = '先に「通り芯」を描いてください';
+    return;
+  }
+  const left = parseOffset(colLeft.value);
+  const bottom = parseOffset(colBottom.value);
+  if (left === undefined || bottom === undefined) {
+    colMsg.textContent = '寄りは数字で入力してください（空欄なら振り分け）';
+    return;
+  }
+  placeLeft = colLeft.value;
+  placeBottom = colBottom.value;
+  const { xs, ys } = gridPositions(drawing.grid);
+  let added = 0;
+  commit(() => {
+    xs.forEach((_, xi) =>
+      ys.forEach((__, yi) => {
+        if (columnAt(drawing, xi, yi)) return;
+        drawing.columns.push({ id: newId(), typeId: currentTypeId, xi, yi, left, bottom });
+        added++;
+      }),
+    );
+  });
+  setMode('column');
+  showSheet(null);
+  const t = drawing.columnTypes.find((c) => c.id === currentTypeId)!;
+  flash(added ? `${t.mark} を ${added}か所に配置しました` : '全部の交点に柱があります');
+});
+
+colDelete.addEventListener('click', () => {
+  const col = editingColumn();
+  if (!col) return;
+  const name = intersectionName(drawing, col.xi, col.yi);
+  commit(() => {
+    drawing.columns = drawing.columns.filter((c) => c.id !== col.id);
+  });
+  showSheet(null);
+  flash(`${name} の柱を削除しました（「戻す」で元に戻せます）`);
+});
+
+document.getElementById('col-close')!.addEventListener('click', () => showSheet(null));
+
+function columnTap(screen: Vec2, type: string) {
+  if (!drawing.grid) {
+    flash('柱を置くには、先に「通り芯」を描いてください');
+    return;
+  }
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+
+  // 既にある柱をタップ → 編集
+  const hit = drawing.columns.find((c) => {
+    const rc = columnRect(drawing, c);
+    return rc && w.x >= rc.min.x - r && w.x <= rc.max.x + r && w.y >= rc.min.y - r && w.y <= rc.max.y + r;
+  });
+  if (hit) {
+    openColumnSheet(hit.id);
+    return;
+  }
+
+  const t = drawing.columnTypes.find((c) => c.id === currentTypeId)!;
+  const ix = nearestIntersection(drawing, w, Math.max(r, Math.max(t.bx, t.by)));
+  if (!ix) {
+    flash('通り芯の交点をタップしてください');
+    return;
+  }
+  const left = parseOffset(placeLeft) ?? null;
+  const bottom = parseOffset(placeBottom) ?? null;
+  commit(() => {
+    drawing.columns.push({ id: newId(), typeId: t.id, xi: ix.xi, yi: ix.yi, left, bottom });
+  });
+  flash(`${t.mark}（${t.bx}×${t.by}）を ${intersectionName(drawing, ix.xi, ix.yi)} に配置しました`);
+}
 
 new ResizeObserver(resize).observe(canvas);
