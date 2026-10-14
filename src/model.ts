@@ -67,6 +67,30 @@ export type Column = {
   bottom: number | null;
 };
 
+/** 壁の符号（部材リスト）。W18 = 厚さ 180 のように決める */
+export type WallType = {
+  id: string;
+  mark: string;
+  /** 厚さ(mm) */
+  t: number;
+};
+
+/**
+ * 配置した壁。通り芯の1本の上で、交点から交点まで（スパン単位）。
+ * axis 'x' = X通りの上の壁（縦の壁）: line = X通りの番号、from/to = Y通りの番号
+ * axis 'y' = Y通りの上の壁（横の壁）: line = Y通りの番号、from/to = X通りの番号
+ * offset は通り芯から壁の左面（縦の壁）／下面（横の壁）までの距離。null は振り分け。
+ */
+export type Wall = {
+  id: string;
+  typeId: string;
+  axis: 'x' | 'y';
+  line: number;
+  from: number;
+  to: number;
+  offset: number | null;
+};
+
 export type Drawing = {
   version: 1;
   units: 'mm';
@@ -77,11 +101,22 @@ export type Drawing = {
   grid?: StructuralGrid;
   columnTypes: ColumnType[];
   columns: Column[];
+  wallTypes: WallType[];
+  walls: Wall[];
 };
 
 export const LAYER_GRID = 'GRID';
 export const LAYER_DIM = 'DIM';
 export const LAYER_COLUMN = 'COLUMN';
+export const LAYER_WALL = 'WALL';
+
+export function defaultWallTypes(): WallType[] {
+  return [
+    { id: 'wt15', mark: 'W15', t: 150 },
+    { id: 'wt18', mark: 'W18', t: 180 },
+    { id: 'wt20', mark: 'W20', t: 200 },
+  ];
+}
 
 export function defaultLayers(): Layer[] {
   return [
@@ -89,6 +124,7 @@ export function defaultLayers(): Layer[] {
     { name: LAYER_GRID, color: 1, linetype: 'CENTER' },
     { name: LAYER_DIM, color: 3 },
     { name: LAYER_COLUMN, color: 4 },
+    { name: LAYER_WALL, color: 5 },
   ];
 }
 
@@ -101,6 +137,8 @@ export function createDrawing(): Drawing {
     entities: [],
     columnTypes: [{ id: 'ct1', mark: 'C1', bx: 800, by: 800 }],
     columns: [],
+    wallTypes: defaultWallTypes(),
+    walls: [],
   };
 }
 
@@ -114,6 +152,8 @@ export function normalizeDrawing(d: Drawing): Drawing {
   out.entities = out.entities ?? [];
   out.columnTypes = out.columnTypes?.length ? out.columnTypes : [{ id: 'ct1', mark: 'C1', bx: 800, by: 800 }];
   out.columns = out.columns ?? [];
+  out.wallTypes = out.wallTypes?.length ? out.wallTypes : defaultWallTypes();
+  out.walls = out.walls ?? [];
   return out;
 }
 

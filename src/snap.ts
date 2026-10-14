@@ -2,6 +2,7 @@ import type { Drawing, Vec2 } from './model';
 import { distance } from './model';
 import { gridIntersections } from './arch/grid';
 import { columnCorners } from './arch/column';
+import { wallCorners } from './arch/wall';
 
 export type SnapKind = 'endpoint' | 'intersection' | 'online' | 'grid' | 'none';
 /** 線分（線上スナップ用） */
@@ -18,6 +19,7 @@ export function snapCandidates(
   const out: SnapCandidate[] = [...more];
   if (drawing.grid) for (const p of gridIntersections(drawing.grid)) out.push({ p, kind: 'intersection' });
   for (const p of columnCorners(drawing)) out.push({ p, kind: 'endpoint' });
+  for (const p of wallCorners(drawing)) out.push({ p, kind: 'endpoint' });
   for (const e of drawing.entities) {
     if (e.kind === 'line') {
       out.push({ p: e.a, kind: 'endpoint' });

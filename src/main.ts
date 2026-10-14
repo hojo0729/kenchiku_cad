@@ -5,6 +5,7 @@ import { centerPattern, decompose, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
+import { gridSpans, nextWallMark, wallName, wallRect, wallsInRange } from './arch/wall';
 import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
 import { readDxf } from './import/dxf-read';
 import { loadUnderlay, saveUnderlay, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
@@ -27,7 +28,7 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'align' | 'measure' | 'erase' | 'offset';
+type Mode = 'line' | 'column' | 'wall' | 'align' | 'measure' | 'erase' | 'offset';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
@@ -40,6 +41,7 @@ let underlay: Underlay | null = loadUnderlay();
 /** 位置合わせで選んだ下敷き側の点 */
 let alignFrom: Vec2 | null = null;
 let currentTypeId = drawing.columnTypes[0].id;
+let currentWallTypeId = (drawing.wallTypes.find((t) => t.mark === 'W18') ?? drawing.wallTypes[0]).id;
 let cursor: SnapResult | null = null;
 let theme: Theme = readTheme();
 let cssW = 0;
@@ -78,6 +80,18 @@ function sampleDrawing(): Drawing {
       d.columns.push({ id: newId(), typeId: inner ? 'ct1' : 'ct2', xi, yi, left: edgeX, bottom: edgeY });
     }
   }
+  // 壁: 外周は W18（外面を柱と同じく通り芯から 150 外に）、中に W15 を1枚
+  const outer = (axis: 'x' | 'y', line: number, from: number, offset: number) =>
+    d.walls.push({ id: newId(), typeId: 'wt18', axis, line, from, to: from + 1, offset });
+  for (let i = 0; i < 3; i++) {
+    outer('y', 0, i, 150); // Y1: 下面が外 → 通り芯から下面まで 150
+    outer('y', 2, i, 30); // Y3: 上面が外 → 下面は通り芯から 30（180-150）
+  }
+  for (let i = 0; i < 2; i++) {
+    outer('x', 0, i, 150);
+    outer('x', 3, i, 30);
+  }
+  d.walls.push({ id: newId(), typeId: 'wt15', axis: 'y', line: 1, from: 0, to: 1, offset: null });
   isSample = true;
   return d;
 }
@@ -196,7 +210,7 @@ function updateStatus() {
     return;
   }
   if (mode === 'erase') {
-    statusEl.textContent = '消す: 消したい線か柱をタップ（下敷き・通り芯は消えません）';
+    statusEl.textContent = '消す: 消したい線・柱・壁をタップ（下敷き・通り芯は消えません）';
     return;
   }
   if (mode === 'offset') {
@@ -209,6 +223,13 @@ function updateStatus() {
       : '下敷きの点（設計図の通り芯の交点など）をタップ';
     return;
   }
+  if (mode === 'wall') {
+    const t = drawing.wallTypes.find((c) => c.id === currentWallTypeId);
+    statusEl.textContent = drawing.grid
+      ? `壁 ${t ? `${t.mark}（厚さ${t.t}）` : ''}: 通り芯の区間をタップで配置／壁をタップで編集`
+      : '壁を置くには、先に「通り芯」を描いてください';
+    return;
+  }
   if (mode === 'column') {
     const t = drawing.columnTypes.find((c) => c.id === currentTypeId);
     statusEl.textContent = drawing.grid
@@ -217,7 +238,7 @@ function updateStatus() {
     return;
   }
   if (isSample && !pending) {
-    statusEl.textContent = 'サンプル（通り芯と柱）を表示中。「柱」で符号の大きさを変えられます';
+    statusEl.textContent = 'サンプル（通り芯・柱・壁）を表示中。「壁」「柱」で符号の大きさを変えられます';
     return;
   }
   const parts: string[] = [];
@@ -466,6 +487,10 @@ function handleTap(screen: Vec2, type: string) {
     columnTap(screen, type);
     return;
   }
+  if (mode === 'wall') {
+    wallTap(screen, type);
+    return;
+  }
   updateCursor(screen, type);
   if (!cursor) return;
   const pt = { ...cursor.point };
@@ -490,6 +515,10 @@ const actions: Record<string, () => void> = {
   column() {
     setMode('column');
     openColumnSheet(null);
+  },
+  wall() {
+    setMode('wall');
+    openWallSheet(null);
   },
   ortho() {
     ortho = !ortho;
@@ -526,6 +555,8 @@ const actions: Record<string, () => void> = {
     if (!prev) return;
     drawing = prev;
     if (!drawing.columnTypes.some((t) => t.id === currentTypeId)) currentTypeId = drawing.columnTypes[0].id;
+    if (!drawing.wallTypes.some((t) => t.id === currentWallTypeId)) currentWallTypeId = drawing.wallTypes[0].id;
+    if (!wallSheet.hidden) renderWallTypes();
     syncGridForm();
     if (!colSheet.hidden) renderColumnTypes();
     pending = null;
@@ -538,7 +569,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0 && !drawing.grid && drawing.columns.length === 0) return;
+    if (drawing.entities.length === 0 && !drawing.grid && drawing.columns.length === 0 && drawing.walls.length === 0) return;
     if (!clearArmed) {
       clearArmed = true;
       clearTitle.textContent = 'もう一度押すと全部消します';
@@ -551,6 +582,7 @@ const actions: Record<string, () => void> = {
       drawing.entities = [];
       drawing.grid = undefined;
       drawing.columns = [];
+      drawing.walls = [];
     });
     syncGridForm();
     pending = null;
@@ -742,6 +774,7 @@ document.getElementById('grid-form')!.addEventListener('submit', (e) => {
     };
     // 通り芯が減ったら、無くなった交点の柱も消す
     drawing.columns = drawing.columns.filter((c) => c.xi <= xs.length && c.yi <= ys.length);
+    drawing.walls = wallsInRange(drawing.walls, xs.length + 1, ys.length + 1);
   });
   showSheet(null);
   fitView();
@@ -757,6 +790,7 @@ document.getElementById('grid-remove')!.addEventListener('click', () => {
   commit(() => {
     drawing.grid = undefined;
     drawing.columns = [];
+    drawing.walls = [];
   });
   showSheet(null);
   flash('通り芯を消しました（「戻す」で元に戻せます）');
@@ -767,7 +801,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -1332,6 +1366,10 @@ function eraseTap(screen: Vec2, type: string) {
     flash('線を消しました（「戻す」で元に戻せます）');
     return;
   }
+  const wall = drawing.walls.find((x) => {
+    const rc = wallRect(drawing, x);
+    return rc && w.x >= rc.min.x && w.x <= rc.max.x && w.y >= rc.min.y && w.y <= rc.max.y;
+  });
   if (col) {
     const name = intersectionName(drawing, col.xi, col.yi);
     commit(() => {
@@ -1340,13 +1378,246 @@ function eraseTap(screen: Vec2, type: string) {
     flash(`${name} の柱を消しました（「戻す」で元に戻せます）`);
     return;
   }
-  flash('ここには消せる線・柱がありません（下敷き・通り芯は消えません）');
+  if (wall) {
+    const name = wallName(drawing, wall);
+    commit(() => {
+      drawing.walls = drawing.walls.filter((x) => x.id !== wall.id);
+    });
+    flash(`${name} の壁を消しました（「戻す」で元に戻せます）`);
+    return;
+  }
+  flash('ここには消せる線・柱・壁がありません（下敷き・通り芯は消えません）');
+}
+
+// ---------- 壁 ----------
+
+const wallSheet = document.getElementById('wall-sheet') as HTMLElement;
+const wallTitle = document.getElementById('wall-title') as HTMLElement;
+const wallTypesEl = document.getElementById('wall-types') as HTMLElement;
+const wallOffset = document.getElementById('wall-offset') as HTMLInputElement;
+const wallMsg = document.getElementById('wall-msg') as HTMLElement;
+const wallOk = document.getElementById('wall-ok') as HTMLButtonElement;
+const wallDelete = document.getElementById('wall-delete') as HTMLButtonElement;
+
+/** 編集中の壁（null なら配置） */
+let wallEditId: string | null = null;
+/** 配置時の寄り（入力のまま） */
+let placeWallOffset = '';
+
+function editingWall() {
+  return wallEditId ? drawing.walls.find((w) => w.id === wallEditId) : undefined;
+}
+
+function openWallSheet(id: string | null) {
+  wallEditId = id;
+  const w = editingWall();
+  wallMsg.textContent = '';
+  if (w) {
+    wallTitle.textContent = `壁（${wallName(drawing, w)}）`;
+    wallOffset.value = w.offset === null ? '' : String(w.offset);
+    wallOk.textContent = '変更を反映';
+    wallDelete.hidden = false;
+  } else {
+    wallTitle.textContent = '壁';
+    wallOffset.value = placeWallOffset;
+    wallOk.textContent = '通り芯の区間をタップして配置';
+    wallDelete.hidden = true;
+  }
+  renderWallTypes();
+  showSheet(wallSheet);
+}
+
+function renderWallTypes() {
+  const w = editingWall();
+  const selectedId = w ? w.typeId : currentWallTypeId;
+  wallTypesEl.replaceChildren();
+  for (const t of drawing.wallTypes) {
+    const count = drawing.walls.filter((x) => x.typeId === t.id).length;
+    const row = document.createElement('div');
+    row.className = 'type-row' + (t.id === selectedId ? ' selected' : '');
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'walltype';
+    radio.id = `walltype-${t.id}`;
+    radio.checked = t.id === selectedId;
+    radio.setAttribute('aria-label', `${t.mark} を使う`);
+    radio.addEventListener('change', () => selectWallType(t.id));
+    const mark = textInput(`wallmark-${t.id}`, t.mark, 'mark', '符号');
+    const thick = textInput(`wallt-${t.id}`, String(t.t), 'size', '厚さ');
+    thick.inputMode = 'numeric';
+    const unit = document.createElement('span');
+    unit.className = 'times';
+    unit.textContent = '厚';
+    const cnt = document.createElement('span');
+    cnt.className = 'count';
+    cnt.textContent = `${count}枚`;
+    const apply = () => updateWallType(t.id, mark.value, thick.value);
+    for (const el of [mark, thick]) {
+      el.addEventListener('change', apply);
+      el.addEventListener('focus', () => selectWallType(t.id, false));
+    }
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = '削除';
+    del.setAttribute('aria-label', `${t.mark} を削除`);
+    del.addEventListener('click', () => deleteWallType(t.id));
+    row.append(radio, mark, unit, thick, cnt, del);
+    wallTypesEl.append(row);
+  }
+}
+
+function selectWallType(id: string, rerender = true) {
+  const w = editingWall();
+  if (w) {
+    if (w.typeId !== id)
+      commit(() => {
+        w.typeId = id;
+      });
+  } else {
+    currentWallTypeId = id;
+  }
+  if (rerender) renderWallTypes();
+  else
+    wallTypesEl.querySelectorAll('.type-row').forEach((row, i) => {
+      const on = drawing.wallTypes[i]?.id === id;
+      row.classList.toggle('selected', on);
+      (row.querySelector('input[type="radio"]') as HTMLInputElement).checked = on;
+    });
+  requestRender();
+}
+
+function updateWallType(id: string, markText: string, tText: string) {
+  const mark = markText.normalize('NFKC').trim();
+  const t = Number(tText.normalize('NFKC'));
+  if (!mark) {
+    wallMsg.textContent = '符号を入力してください（例: W18）';
+    renderWallTypes();
+    return;
+  }
+  if (drawing.wallTypes.some((x) => x.id !== id && x.mark === mark)) {
+    wallMsg.textContent = `符号 ${mark} はもう使われています`;
+    renderWallTypes();
+    return;
+  }
+  if (!(t > 0)) {
+    wallMsg.textContent = '厚さは 0 より大きい数字で入力してください';
+    renderWallTypes();
+    return;
+  }
+  wallMsg.textContent = '';
+  const wt = drawing.wallTypes.find((x) => x.id === id);
+  if (!wt || (wt.mark === mark && wt.t === t)) return;
+  commit(() => {
+    wt.mark = mark;
+    wt.t = t;
+  });
+  const count = drawing.walls.filter((x) => x.typeId === id).length;
+  if (count) flash(`${mark} の壁 ${count}枚を厚さ ${t} に変更しました`);
+  renderWallTypes();
+}
+
+function deleteWallType(id: string) {
+  const wt = drawing.wallTypes.find((x) => x.id === id);
+  if (!wt) return;
+  if (drawing.walls.some((x) => x.typeId === id)) {
+    wallMsg.textContent = `${wt.mark} は図面で使われているので削除できません。先にその壁を消してください`;
+    return;
+  }
+  if (drawing.wallTypes.length === 1) {
+    wallMsg.textContent = '符号は最低1つ必要です';
+    return;
+  }
+  commit(() => {
+    drawing.wallTypes = drawing.wallTypes.filter((x) => x.id !== id);
+  });
+  if (currentWallTypeId === id) currentWallTypeId = drawing.wallTypes[0].id;
+  wallMsg.textContent = '';
+  renderWallTypes();
+}
+
+document.getElementById('wall-type-add')!.addEventListener('click', () => {
+  const t = { id: newId(), mark: nextWallMark(drawing.wallTypes, 250), t: 250 };
+  commit(() => {
+    drawing.wallTypes.push(t);
+  });
+  selectWallType(t.id);
+});
+
+document.getElementById('wall-form')!.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const off = parseOffset(wallOffset.value);
+  if (off === undefined) {
+    wallMsg.textContent = '寄りは数字で入力してください（空欄なら振り分け）';
+    return;
+  }
+  const w = editingWall();
+  if (w) {
+    if (w.offset !== off)
+      commit(() => {
+        w.offset = off;
+      });
+    flash(`${wallName(drawing, w)} の壁を変更しました`);
+  } else {
+    placeWallOffset = wallOffset.value;
+    setMode('wall');
+  }
+  showSheet(null);
+});
+
+wallDelete.addEventListener('click', () => {
+  const w = editingWall();
+  if (!w) return;
+  const name = wallName(drawing, w);
+  commit(() => {
+    drawing.walls = drawing.walls.filter((x) => x.id !== w.id);
+  });
+  showSheet(null);
+  flash(`${name} の壁を削除しました（「戻す」で元に戻せます）`);
+});
+
+document.getElementById('wall-close')!.addEventListener('click', () => showSheet(null));
+
+function wallTap(screen: Vec2, type: string) {
+  if (!drawing.grid) {
+    flash('壁を置くには、先に「通り芯」を描いてください');
+    return;
+  }
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+
+  // 区間を優先して探す（壁の中をタップしても、その区間の壁として扱う）
+  const spans = gridSpans(drawing);
+  const hit = nearestSegment(w, spans, Math.max(r, 400));
+  if (!hit) {
+    // 区間から遠くても、既存の壁の中なら編集
+    const inWall = drawing.walls.find((x) => {
+      const rc = wallRect(drawing, x);
+      return rc && w.x >= rc.min.x && w.x <= rc.max.x && w.y >= rc.min.y && w.y <= rc.max.y;
+    });
+    if (inWall) openWallSheet(inWall.id);
+    else flash('通り芯の区間（交点と交点の間）をタップしてください');
+    return;
+  }
+  const span = spans[hit.index];
+  const existing = drawing.walls.find((x) => x.axis === span.axis && x.line === span.line && x.from === span.from);
+  if (existing) {
+    openWallSheet(existing.id);
+    return;
+  }
+  const t = drawing.wallTypes.find((x) => x.id === currentWallTypeId)!;
+  const offset = parseOffset(placeWallOffset) ?? null;
+  const wall = { id: newId(), typeId: t.id, axis: span.axis, line: span.line, from: span.from, to: span.to, offset };
+  commit(() => {
+    drawing.walls.push(wall);
+  });
+  flash(`${t.mark} を ${wallName(drawing, wall)} に配置しました`);
 }
 
 // 開発時だけ、自動テストから状態を見られるようにする（本番ビルドでは消える）
 if (import.meta.env.DEV) {
   (window as unknown as { __cad: unknown }).__cad = {
     view,
+    redraw: requestRender,
     get underlay() {
       return underlay;
     },

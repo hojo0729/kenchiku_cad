@@ -523,6 +523,7 @@ html, body {
 }
 
 .group .field.inline span { width: 7.5em; flex: none; }
+#wall-sheet .group .field.inline span { width: 9em; }
 .group .field.inline input { flex: 1; min-width: 0; }
 
 /* 下敷きパネル */

@@ -1,5 +1,5 @@
 import type { Vec2 } from './model';
-import { LAYER_COLUMN, LAYER_DIM, LAYER_GRID } from './model';
+import { LAYER_COLUMN, LAYER_DIM, LAYER_GRID, LAYER_WALL } from './model';
 import type { Prim } from './arch/primitives';
 import { formatDim } from './arch/grid';
 import type { SnapResult } from './snap';
@@ -71,7 +71,7 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
       const a = view.toScreen(p.a);
       const b = view.toScreen(p.b);
       ctx.strokeStyle = colorOf(p.layer);
-      ctx.lineWidth = p.layer === LAYER_COLUMN ? 2 : p.layer === '0' ? 1.4 : 1;
+      ctx.lineWidth = p.layer === LAYER_COLUMN ? 2 : p.layer === LAYER_WALL ? 1.6 : p.layer === '0' ? 1.4 : 1;
       if (p.ltype === 'CENTER') {
         const dash = st.centerPattern.map((v) => v * view.scale);
         ctx.setLineDash(dash.reduce((s, v) => s + v, 0) >= 6 ? dash : []);

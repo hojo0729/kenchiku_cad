@@ -41,6 +41,7 @@
       <nav class="toolbar" aria-label="ツール">
         <button id="btn-gridline" data-action="gridPanel">通り芯</button>
         <button id="btn-column" data-action="column" data-mode="column" class="tool">柱</button>
+        <button id="btn-wall" data-action="wall" data-mode="wall" class="tool">壁</button>
         <button id="btn-line" data-action="line" data-mode="line" class="tool active">線</button>
         <button id="btn-ortho" data-action="ortho" aria-pressed="false">直交</button>
         <button id="btn-offset" data-action="offset" data-mode="offset" class="tool">オフセット</button>
@@ -129,6 +130,30 @@
           <div class="sheet-actions">
             <button type="submit" id="off-ok" class="primary">線を選ぶ</button>
             <button type="button" id="off-close">閉じる</button>
+          </div>
+        </form>
+      </section>
+      <section id="wall-sheet" class="sheet" hidden aria-label="壁の設定">
+        <form id="wall-form" class="sheet-body" novalidate>
+          <h2 id="wall-title">壁</h2>
+          <p class="hint">符号ごとに厚さを決めます。ここを直すと、その符号の壁が図面上で全部変わります。交差部や柱との取り合いは自動で処理します。</p>
+          <div id="wall-types" class="type-list" role="radiogroup" aria-label="壁の符号"></div>
+          <div class="sheet-actions">
+            <button type="button" id="wall-type-add">符号を追加</button>
+          </div>
+          <fieldset class="group">
+            <legend>寄り（通り芯から壁面まで、mm）</legend>
+            <label class="field inline" for="wall-offset">
+              <span>通り芯 → 左面・下面</span>
+              <input id="wall-offset" type="text" inputmode="decimal" autocomplete="off" placeholder="振り分け" />
+            </label>
+            <p class="hint">縦の壁は左面まで、横の壁は下面まで。空欄は振り分け（通り芯が壁の中心）。例: 180厚で外面を通り芯から 150 外に出すなら、下側が外の壁は 150。</p>
+          </fieldset>
+          <p id="wall-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="wall-ok" class="primary">通り芯の区間をタップして配置</button>
+            <button type="button" id="wall-delete" hidden>この壁を削除</button>
+            <button type="button" id="wall-close">閉じる</button>
           </div>
         </form>
       </section>
