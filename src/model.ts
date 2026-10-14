@@ -134,13 +134,19 @@ export type Dim = {
   a: Vec2;
   b: Vec2;
   off: number;
+  /** 寸法の値を手で書き換えたときの文字。空・無しなら距離から自動 */
+  text?: string;
 };
 
-/** 文字（注記）。p が左下（ベースライン）の位置 */
+/**
+ * 文字（注記）。p が左下（1行目の下端）の位置。s の改行で複数行になる。
+ * h は文字の高さ（用紙上 mm）。無ければ 3.5mm
+ */
 export type Note = {
   id: string;
   p: Vec2;
   s: string;
+  h?: number;
 };
 
 /** レベル記号（▽ FL±0 など）。p がレベルの位置、s が表記 */

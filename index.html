@@ -55,6 +55,9 @@
           <button id="menu-sample" data-action="openSample" role="menuitem">
             <span class="menu-title">サンプルを開く</span><span class="menu-sub">通り芯・柱・壁・開口・梁の例（「戻す」で元に戻せます）</span>
           </button>
+          <button id="menu-backup" data-action="backups" role="menuitem">
+            <span class="menu-title">バックアップから戻す</span><span class="menu-sub">10分ごと・全消去や開く前の状態を残しています</span>
+          </button>
           <button id="btn-clear" data-action="clear" role="menuitem">
             <span class="menu-title">全消去</span><span class="menu-sub">自分で描いたものを全部消す（下敷きは残る）</span>
           </button>
@@ -253,10 +256,21 @@
           </div>
         </form>
       </section>
+      <section id="backup-sheet" class="sheet" hidden aria-label="バックアップ">
+        <div class="sheet-body">
+          <h2>バックアップから戻す</h2>
+          <p class="hint">新しい順。戻す前の今の図面も「戻す」で取り消せます（バックアップにも残します）。</p>
+          <div id="backup-list" class="layer-list"></div>
+          <div class="sheet-actions">
+            <button type="button" id="backup-close">閉じる</button>
+          </div>
+        </div>
+      </section>
       <section id="dim-sheet" class="sheet" hidden aria-label="寸法の設定">
         <form id="dim-form" class="sheet-body" novalidate>
           <h2 id="dim-title">寸法</h2>
           <p class="hint">値は両端の距離から自動で出ます。両端の座標と寸法線の位置（mm）を直すと、寸法が動きます。位置は、両端の線から寸法線までの距離（＋は左側、−は右側）。</p>
+          <label class="field inline" for="dim-text"><span>値（空欄は自動）</span><input id="dim-text" type="text" autocomplete="off" /></label>
           <label class="field inline" for="dim-off"><span>寸法線の位置（mm）</span><input id="dim-off" type="text" inputmode="decimal" autocomplete="off" /></label>
           <label class="field inline" for="dim-ax"><span>始点 X（mm）</span><input id="dim-ax" type="text" inputmode="decimal" autocomplete="off" /></label>
           <label class="field inline" for="dim-ay"><span>始点 Y（mm）</span><input id="dim-ay" type="text" inputmode="decimal" autocomplete="off" /></label>
@@ -276,7 +290,16 @@
           <p class="hint">置いた位置に入ります。入れたものをタップすると、文字を直したり消したりできます。</p>
           <label class="field inline" for="annot-text">
             <span>内容</span>
-            <input id="annot-text" type="text" autocomplete="off" />
+            <textarea id="annot-text" rows="3" autocomplete="off"></textarea>
+          </label>
+          <label id="annot-size-row" class="field inline" for="annot-size">
+            <span>大きさ（用紙 mm）</span>
+            <select id="annot-size">
+              <option value="2.5">2.5（小）</option>
+              <option value="3.5" selected>3.5（標準）</option>
+              <option value="5">5（大）</option>
+              <option value="7">7（特大）</option>
+            </select>
           </label>
           <p id="annot-msg" class="error" role="alert"></p>
           <div class="sheet-actions">

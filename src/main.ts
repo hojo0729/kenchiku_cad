@@ -3,7 +3,7 @@ import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } from './snap';
 import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
-import { dimAt, dimValue, levelAt, noteAt } from './arch/annot';
+import { dimAt, dimLabel, levelAt, noteAt } from './arch/annot';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
@@ -116,12 +116,82 @@ try {
   /* 無い環境では何もしない */
 }
 
+// ---------- 保存の信頼性（バックアップ・保存失敗・DXF未保存） ----------
+
+const BACKUP_KEY = 'kenchiku-cad:backups';
+const DXF_DIRTY_KEY = 'kenchiku-cad:dxf-dirty';
+/** 定期バックアップの間隔 */
+const BACKUP_EVERY_MS = 10 * 60 * 1000;
+/** 残しておくバックアップの数（古いものから消す） */
+const BACKUP_KEEP = 8;
+
+type Backup = { at: number; data: Drawing };
+
+function readBackups(): Backup[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(BACKUP_KEY) ?? '[]') as unknown;
+    return Array.isArray(arr) ? (arr as Backup[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+let lastBackupAt = readBackups().at(-1)?.at ?? 0;
+
+/**
+ * 図面のバックアップを残す。force でないときは BACKUP_EVERY_MS ごと。
+ * 保存できないとき（容量不足）は古いものから減らして入れ直す。
+ */
+function addBackup(d: Drawing, force = false) {
+  const now = Date.now();
+  if (!force && now - lastBackupAt < BACKUP_EVERY_MS) return;
+  lastBackupAt = now;
+  let list = [...readBackups(), { at: now, data: structuredClone(d) }].slice(-BACKUP_KEEP);
+  for (;;) {
+    try {
+      localStorage.setItem(BACKUP_KEY, JSON.stringify(list));
+      return;
+    } catch {
+      if (list.length <= 1) return;
+      list = list.slice(1);
+    }
+  }
+}
+
+/** 最後に DXF で保存してから変更があったか（ブラウザを開き直しても残す） */
+let dxfDirty = (() => {
+  try {
+    return localStorage.getItem(DXF_DIRTY_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+
+function setDxfDirty(v: boolean) {
+  dxfDirty = v;
+  try {
+    if (v) localStorage.setItem(DXF_DIRTY_KEY, '1');
+    else localStorage.removeItem(DXF_DIRTY_KEY);
+  } catch {
+    /* 保存できない環境では表示だけ */
+  }
+}
+
+/** 自動保存できなかったときの警告（状態表示に出す） */
+let saveWarn = '';
+
 function saveDrawing() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(drawing));
+    if (saveWarn) {
+      saveWarn = '';
+      flash('自動保存できるようになりました');
+    }
   } catch {
-    /* 保存できない環境では無視 */
+    if (!saveWarn) flash('自動保存できません（ブラウザの容量が足りない可能性）。DXFで保存してください');
+    saveWarn = '自動保存できていません。DXFで保存してください';
   }
+  addBackup(drawing);
 }
 
 function commit(mutator: () => void) {
@@ -131,6 +201,7 @@ function commit(mutator: () => void) {
   mutator();
   // 壁が無くなった開口は消す
   drawing.openings = drawing.openings.filter((o) => drawing.walls.some((w) => w.id === o.wallId));
+  setDxfDirty(true);
   saveDrawing();
   requestRender();
 }
@@ -213,7 +284,16 @@ function flash(msg: string) {
   updateStatus();
 }
 
+/** 状態表示。道具ごとの文言の後ろに、保存の注意（DXF未保存・自動保存できない）を必ず付ける */
 function updateStatus() {
+  updateStatusText();
+  const notes: string[] = [];
+  if (saveWarn) notes.push(saveWarn);
+  else if (dxfDirty) notes.push('DXF未保存の変更あり');
+  if (notes.length && !flashMsg) statusEl.textContent = `${statusEl.textContent}　|　${notes.join('　')}`;
+}
+
+function updateStatusText() {
   // 長押し中の案内は、前の操作のメッセージより優先
   if (gesture === 'press') {
     statusEl.classList.remove('flash');
@@ -593,6 +673,10 @@ const actions: Record<string, () => void> = {
   edit() {
     setMode('edit');
   },
+  backups() {
+    setMenu(false);
+    openBackupSheet();
+  },
   note() {
     setMode('note');
   },
@@ -615,8 +699,10 @@ const actions: Record<string, () => void> = {
     openOpeningSheet(null);
   },
   openSample() {
+    addBackup(drawing, true);
     history.push(structuredClone(drawing));
     drawing = sampleDrawing();
+    setDxfDirty(true);
     saveDrawing();
     syncGridForm();
     fitView();
@@ -672,7 +758,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length) return;
+    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length && !drawing.dims.length && !drawing.notes.length && !drawing.levels.length && !drawing.openings.length) return;
     if (!clearArmed) {
       clearArmed = true;
       clearTitle.textContent = 'もう一度押すと全部消します';
@@ -681,12 +767,17 @@ const actions: Record<string, () => void> = {
       return;
     }
     disarmClear();
+    addBackup(drawing, true);
     commit(() => {
       drawing.entities = [];
       drawing.grid = undefined;
       drawing.columns = [];
       drawing.walls = [];
       drawing.beams = [];
+      drawing.openings = [];
+      drawing.dims = [];
+      drawing.notes = [];
+      drawing.levels = [];
     });
     syncGridForm();
     pending = null;
@@ -750,6 +841,7 @@ async function exportDxf() {
     const zip = zipStore([{ name: `${name}.dxf`, data: bytes }]);
     try {
       await downloads.save({ filename: `${name}.zip`, data: zip });
+      setDxfDirty(false);
       flash('保存しました（zipを展開するとDXF。「開く」ならzipのままで続きを編集できます）');
     } catch (e) {
       const code = (e as { code?: string })?.code ?? 'unknown';
@@ -772,6 +864,7 @@ async function exportDxf() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setDxfDirty(false);
   flash(`${name}.dxf を保存しました`);
 }
 
@@ -800,9 +893,11 @@ openInput.addEventListener('change', async () => {
       flash('部材データが入っていないファイルです。設計図などは「下敷き」から読み込んでください');
       return;
     }
+    addBackup(drawing, true);
     history.push(structuredClone(drawing));
     drawing = opened;
     isSample = false;
+    setDxfDirty(false); // 開いた DXF が今の図面（保存済み）
     replaceDrawing();
     flash(`${name} を開きました（「戻す」で前の図面に戻せます）`);
   } catch {
@@ -1130,7 +1225,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet, backupSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -2264,7 +2359,9 @@ function openingTap(screen: Vec2, type: string) {
 const annotSheet = document.getElementById('annot-sheet') as HTMLElement;
 const annotTitle = document.getElementById('annot-title') as HTMLElement;
 const annotForm = document.getElementById('annot-form') as HTMLFormElement;
-const annotText = document.getElementById('annot-text') as HTMLInputElement;
+const annotText = document.getElementById('annot-text') as HTMLTextAreaElement;
+const annotSizeRow = document.getElementById('annot-size-row') as HTMLElement;
+const annotSize = document.getElementById('annot-size') as HTMLSelectElement;
 const annotMsg = document.getElementById('annot-msg') as HTMLElement;
 const annotOk = document.getElementById('annot-ok') as HTMLButtonElement;
 const annotDelete = document.getElementById('annot-delete') as HTMLButtonElement;
@@ -2331,6 +2428,8 @@ function openAnnotSheet(kind: AnnotKind, id: string | null, at: Vec2 | null) {
   const item = id ? (kind === 'note' ? drawing.notes.find((x) => x.id === id) : drawing.levels.find((x) => x.id === id)) : undefined;
   annotTitle.textContent = kind === 'note' ? '文字' : 'レベル';
   annotText.value = item ? item.s : kind === 'note' ? '' : 'FL±0';
+  annotSizeRow.hidden = kind !== 'note';
+  annotSize.value = String((item as { h?: number } | undefined)?.h ?? 3.5);
   annotText.placeholder = kind === 'note' ? '例: 注記・仕上げ・ピット' : '例: FL+3.500 / GL±0 / 天端 FL+2.800';
   annotOk.textContent = item ? '変更を反映' : kind === 'note' ? 'この位置に入れる' : 'この位置に置く';
   annotDelete.hidden = !item;
@@ -2345,18 +2444,26 @@ annotForm.addEventListener('submit', (e) => {
     return;
   }
   const kind = annotKind;
+  const h = Number(annotSize.value) || 3.5;
   if (annotEditId) {
     const id = annotEditId;
     commit(() => {
-      const list = kind === 'note' ? drawing.notes : drawing.levels;
-      const it = list.find((x) => x.id === id);
-      if (it) it.s = s;
+      if (kind === 'note') {
+        const it = drawing.notes.find((x) => x.id === id);
+        if (it) {
+          it.s = s;
+          it.h = h;
+        }
+      } else {
+        const it = drawing.levels.find((x) => x.id === id);
+        if (it) it.s = s;
+      }
     });
     flash('変更しました');
   } else if (annotAt) {
     const at = annotAt;
     commit(() => {
-      if (kind === 'note') drawing.notes.push({ id: newId(), p: at, s });
+      if (kind === 'note') drawing.notes.push({ id: newId(), p: at, s, h });
       else drawing.levels.push({ id: newId(), p: at, s });
     });
     flash(kind === 'note' ? `文字「${s}」を入れました` : `レベル ${s} を置きました`);
@@ -2384,6 +2491,7 @@ const dimSheet = document.getElementById('dim-sheet') as HTMLElement;
 const dimTitle = document.getElementById('dim-title') as HTMLElement;
 const dimForm = document.getElementById('dim-form') as HTMLFormElement;
 const dimOff = document.getElementById('dim-off') as HTMLInputElement;
+const dimText = document.getElementById('dim-text') as HTMLInputElement;
 const dimAx = document.getElementById('dim-ax') as HTMLInputElement;
 const dimAy = document.getElementById('dim-ay') as HTMLInputElement;
 const dimBx = document.getElementById('dim-bx') as HTMLInputElement;
@@ -2396,7 +2504,8 @@ function openDimSheet(id: string) {
   const d = drawing.dims.find((x) => x.id === id);
   if (!d) return;
   dimEditId = id;
-  dimTitle.textContent = `寸法 ${dimValue(d)}`;
+  dimTitle.textContent = `寸法 ${dimLabel(d)}`;
+  dimText.value = d.text ?? '';
   dimOff.value = String(d.off);
   dimAx.value = String(Math.round(d.a.x));
   dimAy.value = String(Math.round(d.a.y));
@@ -2426,6 +2535,8 @@ dimForm.addEventListener('submit', (e) => {
     d.off = Math.round(off);
     d.a = { x: ax, y: ay };
     d.b = { x: bx, y: by };
+    const text = dimText.value.normalize('NFKC').trim();
+    d.text = text || undefined;
   });
   flash('寸法を直しました');
   showSheet(null);
@@ -2466,6 +2577,71 @@ function editTap(screen: Vec2, type: string) {
   if (beam) return beamPanel.open(beam.id);
   flash('編集できるもの（寸法・文字・レベル・開口・柱・壁・梁）をタップしてください');
 }
+
+// ---------- バックアップから戻す ----------
+
+const backupSheet = document.getElementById('backup-sheet') as HTMLElement;
+const backupList = document.getElementById('backup-list') as HTMLElement;
+
+function backupSummary(d: Drawing): string {
+  return `通り芯${d.grid ? 'あり' : 'なし'}・柱${d.columns.length}・壁${d.walls.length}・梁${d.beams.length}・寸法${d.dims.length}・文字${d.notes.length}`;
+}
+
+function openBackupSheet() {
+  backupList.replaceChildren();
+  const list = readBackups().slice().reverse();
+  if (list.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'まだバックアップがありません';
+    backupList.append(p);
+  }
+  for (const b of list) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'backup-row';
+    const when = document.createElement('span');
+    when.className = 'menu-title';
+    when.textContent = new Date(b.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const sub = document.createElement('span');
+    sub.className = 'menu-sub';
+    sub.textContent = backupSummary(b.data);
+    btn.append(when, sub);
+    let armed = false;
+    let timer = 0;
+    btn.addEventListener('click', () => {
+      // 2回タップで確定（confirm は使えない環境があるため）
+      if (!armed) {
+        armed = true;
+        btn.classList.add('danger');
+        sub.textContent = 'もう一度押すと、この時点に戻します';
+        timer = window.setTimeout(() => {
+          armed = false;
+          btn.classList.remove('danger');
+          sub.textContent = backupSummary(b.data);
+        }, 3000);
+        return;
+      }
+      window.clearTimeout(timer);
+      restoreBackup(b);
+    });
+    backupList.append(btn);
+  }
+  showSheet(backupSheet);
+}
+
+function restoreBackup(b: Backup) {
+  addBackup(drawing, true); // 戻す前の今の図面も残す
+  history.push(structuredClone(drawing));
+  drawing = normalizeDrawing(structuredClone(b.data));
+  isSample = false;
+  setDxfDirty(true);
+  replaceDrawing();
+  showSheet(null);
+  flash('バックアップの状態に戻しました（「戻す」で戻す前の図面に戻せます）');
+}
+
+document.getElementById('backup-close')!.addEventListener('click', () => showSheet(null));
 
 // ---------- レイヤー ----------
 

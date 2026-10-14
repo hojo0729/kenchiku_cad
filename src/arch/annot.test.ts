@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDrawing } from '../model';
-import { decomposeDim, dimAt, dimValue, distToSegment, noteWidth, decomposeLevel } from './annot';
+import { decomposeDim, decomposeNote, dimAt, dimLabel, dimValue, distToSegment, noteBox, noteWidth, decomposeLevel } from './annot';
 
 describe('寸法', () => {
   it('値は a と b の距離（丸めて、3桁ごとにカンマ）', () => {
@@ -31,6 +31,26 @@ describe('寸法', () => {
     d.dims.push({ id: 'x', a: { x: 0, y: 0 }, b: { x: 6000, y: 0 }, off: 1000 });
     expect(dimAt(d, { x: 3000, y: 1005 }, 10)?.id).toBe('x');
     expect(dimAt(d, { x: 3000, y: 0 }, 10)).toBeUndefined();
+  });
+});
+
+describe('寸法の手入力と文字の複数行', () => {
+  it('手で書いた値があれば、それを使う（空なら距離）', () => {
+    expect(dimLabel({ id: 'x', a: { x: 0, y: 0 }, b: { x: 6000, y: 0 }, off: 0, text: '6,000 (設計値)' })).toBe('6,000 (設計値)');
+    expect(dimLabel({ id: 'x', a: { x: 0, y: 0 }, b: { x: 6000, y: 0 }, off: 0, text: '  ' })).toBe('6,000');
+  });
+
+  it('改行で行が分かれ、先頭の行が一番上に来る', () => {
+    const prims = decomposeNote({ id: 'n', p: { x: 0, y: 0 }, s: '上\n下', h: 3.5 }, 50);
+    expect(prims.length).toBe(2);
+    const [first, second] = prims;
+    expect(first.t === 'text' && second.t === 'text' && first.p.y > second.p.y).toBe(true);
+    expect(first.t === 'text' ? first.s : '').toBe('上');
+  });
+
+  it('文字の大きさを変えると高さも変わる（用紙 mm × 縮尺）', () => {
+    const box = noteBox({ id: 'n', p: { x: 0, y: 0 }, s: 'A', h: 5 }, 50);
+    expect(box.h).toBeCloseTo(250);
   });
 });
 

@@ -45,10 +45,24 @@ export function dimLineEnds(dim: Dim): [Vec2, Vec2] | null {
   ];
 }
 
-/** 寸法の値（mm、文字） */
+/** 寸法の値（距離から自動、mm、文字） */
 export function dimValue(dim: Dim): string {
   const f = frameOf(dim.a, dim.b);
   return f ? formatDim(Math.round(f.len)) : '';
+}
+
+/** 寸法に書く文字: 手で書き換えた値があればそれ、無ければ距離 */
+export function dimLabel(dim: Dim): string {
+  return dim.text && dim.text.trim() ? dim.text.trim() : dimValue(dim);
+}
+
+/** 文字の高さの選択肢（用紙上 mm） */
+export const NOTE_SIZES = [2.5, 3.5, 5, 7];
+/** 行の間隔（文字の高さに対する比） */
+const LINE_GAP = 1.5;
+
+function noteHeight(n: Note): number {
+  return n.h ?? NOTE_TEXT;
 }
 
 /** 寸法を描く（補助線・寸法線・斜線の終端・文字） */
@@ -89,7 +103,7 @@ export function decomposeDim(dim: Dim, scale: number): Prim[] {
     layer,
     p: { x: mid.x + up.x * h * 0.4, y: mid.y + up.y * h * 0.4 },
     h,
-    s: dimValue(dim),
+    s: dimLabel(dim),
     align: 'center',
     valign: 'bottom',
     rot: deg,
@@ -104,19 +118,28 @@ export function noteWidth(s: string, h: number): number {
   return w;
 }
 
+/** 文字（複数行は上から順に並べる。p は最後の行の下端） */
 export function decomposeNote(note: Note, scale: number): Prim[] {
-  return [
-    {
-      t: 'text',
-      layer: LAYER_NOTE,
-      p: note.p,
-      h: NOTE_TEXT * scale,
-      s: note.s,
-      align: 'left',
-      valign: 'bottom',
-      rot: 0,
-    },
-  ];
+  const lines = note.s.split('\n');
+  const h = noteHeight(note) * scale;
+  return lines.map((s, i) => ({
+    t: 'text' as const,
+    layer: LAYER_NOTE,
+    p: { x: note.p.x, y: note.p.y + (lines.length - 1 - i) * h * LINE_GAP },
+    h,
+    s,
+    align: 'left' as const,
+    valign: 'bottom' as const,
+    rot: 0,
+  }));
+}
+
+/** 文字の大きさ（幅・高さ、mm 単位の実寸）。当たり判定と範囲計算に使う */
+export function noteBox(note: Note, scale: number): { w: number; h: number } {
+  const h = noteHeight(note) * scale;
+  const lines = note.s.split('\n');
+  const w = Math.max(...lines.map((s) => noteWidth(s, h)));
+  return { w, h: h + (lines.length - 1) * h * LINE_GAP };
 }
 
 /** レベル記号: 頂点が位置 p の▽と、その上の横線、表記 */
@@ -169,9 +192,8 @@ export function dimAt(d: Drawing, w: Vec2, r: number): Dim | undefined {
 /** タップ位置の文字（左下から右上の外側 r まで） */
 export function noteAt(d: Drawing, w: Vec2, r: number): Note | undefined {
   return d.notes.find((n) => {
-    const h = NOTE_TEXT * d.scale;
-    const width = noteWidth(n.s, h);
-    return w.x >= n.p.x - r && w.x <= n.p.x + width + r && w.y >= n.p.y - r && w.y <= n.p.y + h + r;
+    const box = noteBox(n, d.scale);
+    return w.x >= n.p.x - r && w.x <= n.p.x + box.w + r && w.y >= n.p.y - r && w.y <= n.p.y + box.h + r;
   });
 }
 
