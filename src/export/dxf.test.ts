@@ -47,7 +47,7 @@ describe('toDxf', () => {
   it('Jw_cad が必要とするヘッダ・テーブル・BLOCKS を含む', () => {
     const p = pairs(toDxf(sample()));
     const vars = p.filter(([c]) => c === 9).map(([, v]) => v);
-    expect(vars).toEqual(['$ACADVER', '$INSBASE', '$EXTMIN', '$EXTMAX', '$LIMMIN', '$LIMMAX']);
+    expect(vars).toEqual(['$ACADVER', '$INSBASE', '$EXTMIN', '$EXTMAX', '$LIMMIN', '$LIMMAX', '$LTSCALE']);
     const sections = p.filter(([c], i) => c === 2 && p[i - 1]?.[1] === 'SECTION').map(([, v]) => v);
     expect(sections).toEqual(['HEADER', 'TABLES', 'BLOCKS', 'ENTITIES']);
     const tables = p.filter(([c], i) => c === 2 && p[i - 1]?.[1] === 'TABLE').map(([, v]) => v);
@@ -61,7 +61,7 @@ describe('toDxf', () => {
   });
 
   it('$LIMMIN/$LIMMAX は 用紙×縮尺 の範囲を図形中心に置く（既定 A3・1/100）', () => {
-    const p = pairs(toDxf(sample()));
+    const p = pairs(toDxf(sample(), { scale: 100 }));
     const at = (name: string) => {
       const i = p.findIndex(([, v]) => v === name);
       return [Number(p[i + 1][1]), Number(p[i + 2][1])];

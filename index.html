@@ -14,6 +14,7 @@
         <canvas id="canvas"></canvas>
       </main>
       <nav class="toolbar" aria-label="ツール">
+        <button id="btn-gridline" data-action="gridPanel">通り芯</button>
         <button id="btn-line" data-action="line" class="tool active">線</button>
         <button id="btn-end" data-action="endChain">線を終了</button>
         <button id="btn-undo" data-action="undo">戻す</button>
@@ -21,15 +22,46 @@
         <label class="grid-select" for="grid">
           グリッド
           <select id="grid">
-            <option value="910">910</option>
-            <option value="455" selected>455</option>
-            <option value="100">100</option>
+            <option value="1000">1000</option>
+            <option value="500">500</option>
+            <option value="100" selected>100</option>
             <option value="0">なし</option>
           </select>
         </label>
         <button id="btn-clear" data-action="clear">全消去</button>
         <button id="btn-dxf" data-action="exportDxf" class="primary">DXF保存</button>
       </nav>
+      <section id="grid-sheet" class="sheet" hidden aria-label="通り芯の設定">
+        <form id="grid-form" class="sheet-body" novalidate>
+          <h2>通り芯</h2>
+          <label class="field" for="grid-x">
+            <span>X方向のスパン（X1から右へ、mm）</span>
+            <input id="grid-x" type="text" inputmode="text" autocomplete="off" placeholder="6000, 7200, 6000" />
+          </label>
+          <label class="field" for="grid-y">
+            <span>Y方向のスパン（Y1から上へ、mm）</span>
+            <input id="grid-y" type="text" inputmode="text" autocomplete="off" placeholder="6500, 6500" />
+          </label>
+          <p class="hint">同じスパンの繰り返しは <code>7200*3</code> のように書けます。</p>
+          <label class="field inline" for="scale">
+            <span>縮尺</span>
+            <select id="scale">
+              <option value="20">1/20</option>
+              <option value="30">1/30</option>
+              <option value="50" selected>1/50</option>
+              <option value="100">1/100</option>
+              <option value="200">1/200</option>
+            </select>
+          </label>
+          <p id="grid-summary" class="summary"></p>
+          <p id="grid-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="grid-apply" class="primary">描く</button>
+            <button type="button" id="grid-remove">通り芯を消す</button>
+            <button type="button" id="grid-close">閉じる</button>
+          </div>
+        </form>
+      </section>
     </div>
     <!--app:end-->
     <script type="module" src="/src/main.ts"></script>

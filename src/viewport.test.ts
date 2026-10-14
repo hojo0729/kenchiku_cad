@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Viewport } from './viewport';
-import { snapPoint } from './snap';
+import { snapCandidates, snapPoint } from './snap';
+import { createDrawing } from './model';
 
 describe('Viewport', () => {
   it('ワールド⇔スクリーンが往復で一致し、Yが反転する', () => {
@@ -25,7 +26,9 @@ describe('Viewport', () => {
 });
 
 describe('snapPoint', () => {
-  const lines = [{ id: '1', kind: 'line' as const, layer: '0', a: { x: 0, y: 0 }, b: { x: 1000, y: 0 } }];
+  const d = createDrawing();
+  d.entities.push({ id: '1', kind: 'line', layer: '0', a: { x: 0, y: 0 }, b: { x: 1000, y: 0 } });
+  const lines = snapCandidates(d);
 
   it('近くの端点を優先する', () => {
     const r = snapPoint({ x: 990, y: 8 }, lines, 20, 455);
@@ -35,5 +38,12 @@ describe('snapPoint', () => {
   it('端点がなければグリッドに吸着', () => {
     const r = snapPoint({ x: 470, y: 300 }, lines, 20, 455);
     expect(r).toEqual({ point: { x: 455, y: 455 }, kind: 'grid' });
+  });
+
+  it('通り芯の交点を拾う', () => {
+    const g = createDrawing();
+    g.grid = { xSpans: [6000], ySpans: [6500], xPrefix: 'X', yPrefix: 'Y', origin: { x: 0, y: 0 } };
+    const r = snapPoint({ x: 5980, y: 6510 }, snapCandidates(g), 50, 100);
+    expect(r).toEqual({ point: { x: 6000, y: 6500 }, kind: 'intersection' });
   });
 });

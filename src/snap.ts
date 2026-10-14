@@ -1,38 +1,41 @@
-import type { Entity, Vec2 } from './model';
+import type { Drawing, Vec2 } from './model';
 import { distance } from './model';
+import { gridIntersections } from './arch/grid';
 
-export type SnapKind = 'endpoint' | 'grid' | 'none';
+export type SnapKind = 'endpoint' | 'intersection' | 'grid' | 'none';
 export type SnapResult = { point: Vec2; kind: SnapKind };
+export type SnapCandidate = { p: Vec2; kind: 'endpoint' | 'intersection' };
 
-/**
- * 優先順位: 端点 > グリッド > そのまま
- * @param radius 端点を拾う半径（ワールド単位 mm）
- * @param grid グリッド間隔(mm)。0ならグリッドスナップなし
- */
-export function snapPoint(
-  raw: Vec2,
-  entities: readonly Entity[],
-  radius: number,
-  grid: number,
-  extraPoints: readonly Vec2[] = [],
-): SnapResult {
-  let best: Vec2 | null = null;
-  let bestD = radius;
-  const consider = (p: Vec2) => {
-    const d = distance(raw, p);
-    if (d <= bestD) {
-      bestD = d;
-      best = p;
-    }
-  };
-  for (const e of entities) {
+/** スナップ候補点: 線の端点と通り芯の交点 */
+export function snapCandidates(drawing: Drawing, extra: readonly Vec2[] = []): SnapCandidate[] {
+  const out: SnapCandidate[] = [];
+  if (drawing.grid) for (const p of gridIntersections(drawing.grid)) out.push({ p, kind: 'intersection' });
+  for (const e of drawing.entities) {
     if (e.kind === 'line') {
-      consider(e.a);
-      consider(e.b);
+      out.push({ p: e.a, kind: 'endpoint' });
+      out.push({ p: e.b, kind: 'endpoint' });
     }
   }
-  for (const p of extraPoints) consider(p);
-  if (best) return { point: { ...(best as Vec2) }, kind: 'endpoint' };
+  for (const p of extra) out.push({ p, kind: 'endpoint' });
+  return out;
+}
+
+/**
+ * 優先順位: 端点・交点 > グリッド > そのまま
+ * @param radius 拾う半径（ワールド単位 mm）
+ * @param grid グリッド間隔(mm)。0ならグリッドスナップなし
+ */
+export function snapPoint(raw: Vec2, candidates: readonly SnapCandidate[], radius: number, grid: number): SnapResult {
+  let best: SnapCandidate | null = null;
+  let bestD = radius;
+  for (const c of candidates) {
+    const d = distance(raw, c.p);
+    if (d <= bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  if (best) return { point: { ...best.p }, kind: best.kind };
 
   if (grid > 0) {
     return {

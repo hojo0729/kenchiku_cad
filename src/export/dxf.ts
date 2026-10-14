@@ -1,4 +1,5 @@
-import type { Drawing, Vec2 } from '../model';
+import type { Drawing, Layer, Vec2 } from '../model';
+import { centerPattern, decompose, primExtents, type Prim } from '../arch/primitives';
 
 /**
  * DXF R12 (AC1009) ASCII 形式で書き出す。
@@ -13,13 +14,16 @@ import type { Drawing, Vec2 } from '../model';
  *  - 空の BLOCKS セクション
  *  - R12 に存在しない変数（$MEASUREMENT 等）は書かない
  *
+ * 建築部材は decompose() で線・円・文字に分解してから書く。
+ *
  * 注意: R12 では日本語の画層名/文字は Shift_JIS が前提。
- * 今はASCIIのみ想定（日本語対応は文字実装時に Shift_JIS エンコードを追加）。
+ * 今はASCIIのみ想定（寸法値・通り芯符号は ASCII）。
  */
+
 export type DxfOptions = {
   /** 用紙サイズ(mm)。既定は A3 横 */
   paper?: { width: number; height: number };
-  /** 縮尺の分母。既定は 100（1/100） */
+  /** 縮尺の分母。既定は図面の縮尺 */
   scale?: number;
 };
 
@@ -30,7 +34,9 @@ export type DxfOptions = {
  */
 export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   const paper = options.paper ?? { width: 420, height: 297 };
-  const scale = options.scale ?? 100;
+  const scale = options.scale ?? drawing.scale ?? 100;
+  const prims = decompose(drawing);
+
   const out: string[] = [];
   const g = (code: number, value: string | number) => {
     let text: string;
@@ -45,7 +51,8 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
     g(base + 20, 0);
   };
 
-  const { min, max } = extents(drawing);
+  const ext = primExtents(prims) ?? { min: { x: 0, y: 0 }, max: { x: 10000, y: 10000 } };
+  const { min, max } = ext;
 
   // ---------- HEADER ----------
   g(0, 'SECTION');
@@ -68,6 +75,8 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(9, '$LIMMAX');
   g(10, lcx + lw / 2);
   g(20, lcy + lh / 2);
+  g(9, '$LTSCALE');
+  g(40, 1);
   g(0, 'ENDSEC');
 
   // ---------- TABLES ----------
@@ -75,8 +84,6 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(2, 'TABLES');
 
   // VPORT（*ACTIVE を図面範囲に合わせる）
-  const cx = (min.x + max.x) / 2;
-  const cy = (min.y + max.y) / 2;
   const height = Math.max(max.y - min.y, (max.x - min.x) / 1.5, 1) * 1.1;
   g(0, 'TABLE');
   g(2, 'VPORT');
@@ -88,8 +95,8 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(20, 0);
   g(11, 1);
   g(21, 1);
-  g(12, cx);
-  g(22, cy);
+  g(12, lcx);
+  g(22, lcy);
   g(13, 0);
   g(23, 0);
   g(14, 1);
@@ -119,10 +126,11 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(78, 0);
   g(0, 'ENDTAB');
 
-  // LTYPE
+  // LTYPE（実線と一点鎖線。鎖線のピッチは縮尺に合わせた実寸）
+  const cp = centerPattern(scale);
   g(0, 'TABLE');
   g(2, 'LTYPE');
-  g(70, 1);
+  g(70, 2);
   g(0, 'LTYPE');
   g(2, 'CONTINUOUS');
   g(70, 0);
@@ -130,17 +138,21 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   g(72, 65);
   g(73, 0);
   g(40, 0);
+  g(0, 'LTYPE');
+  g(2, 'CENTER');
+  g(70, 0);
+  g(3, 'Center ____ _ ____ _');
+  g(72, 65);
+  g(73, 4);
+  g(40, cp.reduce((s, v) => s + v, 0));
+  g(49, cp[0]);
+  g(49, -cp[1]);
+  g(49, cp[2]);
+  g(49, -cp[3]);
   g(0, 'ENDTAB');
 
   // LAYER
-  const layerNames = new Set(drawing.layers.map((l) => l.name));
-  const layers = [...drawing.layers];
-  for (const e of drawing.entities) {
-    if (!layerNames.has(e.layer)) {
-      layerNames.add(e.layer);
-      layers.push({ name: e.layer, color: 7 });
-    }
-  }
+  const layers = collectLayers(drawing.layers, prims);
   g(0, 'TABLE');
   g(2, 'LAYER');
   g(70, layers.length);
@@ -149,7 +161,7 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
     g(2, l.name);
     g(70, 0);
     g(62, l.color);
-    g(6, 'CONTINUOUS');
+    g(6, l.linetype ?? 'CONTINUOUS');
   }
   g(0, 'ENDTAB');
 
@@ -187,14 +199,37 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   // ---------- ENTITIES ----------
   g(0, 'SECTION');
   g(2, 'ENTITIES');
-  for (const e of drawing.entities) {
-    switch (e.kind) {
+  for (const p of prims) {
+    switch (p.t) {
       case 'line':
         g(0, 'LINE');
-        g(8, e.layer);
-        point(10, e.a);
-        point(11, e.b);
+        g(8, p.layer);
+        if (p.ltype) g(6, p.ltype);
+        point(10, p.a);
+        point(11, p.b);
         break;
+      case 'circle':
+        g(0, 'CIRCLE');
+        g(8, p.layer);
+        point(10, p.c);
+        g(40, p.r);
+        break;
+      case 'text': {
+        g(0, 'TEXT');
+        g(8, p.layer);
+        point(10, p.p);
+        g(40, p.h);
+        g(1, p.s);
+        if (p.rot) g(50, p.rot);
+        const h = p.align === 'center' ? 1 : 0;
+        const v = p.valign === 'middle' ? 2 : 0;
+        if (h || v) {
+          g(72, h);
+          point(11, p.p);
+          g(73, v);
+        }
+        break;
+      }
     }
   }
   g(0, 'ENDSEC');
@@ -204,24 +239,16 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
   return out.join('\r\n') + '\r\n';
 }
 
-/** 図形全体の範囲。空なら原点付近の 10m 四方 */
-export function extents(drawing: Drawing): { min: Vec2; max: Vec2 } {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const e of drawing.entities) {
-    if (e.kind === 'line') {
-      for (const p of [e.a, e.b]) {
-        minX = Math.min(minX, p.x);
-        minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x);
-        maxY = Math.max(maxY, p.y);
-      }
+function collectLayers(base: readonly Layer[], prims: readonly Prim[]): Layer[] {
+  const layers = [...base];
+  const names = new Set(layers.map((l) => l.name));
+  for (const p of prims) {
+    if (!names.has(p.layer)) {
+      names.add(p.layer);
+      layers.push({ name: p.layer, color: 7 });
     }
   }
-  if (!Number.isFinite(minX)) return { min: { x: 0, y: 0 }, max: { x: 10000, y: 10000 } };
-  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+  return layers;
 }
 
 /** 実数を書くべきグループコードか（それ以外の数値コードは整数で書く必要がある） */

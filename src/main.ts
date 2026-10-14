@@ -1,6 +1,8 @@
-import { createDrawing, distance, newId, type Drawing, type Entity, type Vec2 } from './model';
+import { createDrawing, distance, newId, normalizeDrawing, type Drawing, type Vec2 } from './model';
 import { Viewport } from './viewport';
-import { snapPoint, type SnapResult } from './snap';
+import { snapCandidates, snapPoint, type SnapResult } from './snap';
+import { centerPattern, decompose, primExtents } from './arch/primitives';
+import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { readTheme, render, type Theme } from './renderer';
 import { toDxf } from './export/dxf';
 import { zipStore } from './export/zip';
@@ -17,7 +19,7 @@ let isSample = false;
 let flashMsg = '';
 let flashTimer = 0;
 let drawing: Drawing = loadDrawing();
-let history: Entity[][] = [];
+let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
 let cursor: SnapResult | null = null;
@@ -33,7 +35,7 @@ function loadDrawing(): Drawing {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const d = JSON.parse(raw) as Drawing;
-      if (d && d.version === 1 && Array.isArray(d.entities)) return d;
+      if (d && d.version === 1 && Array.isArray(d.entities)) return normalizeDrawing(d);
     }
   } catch {
     /* 読めなければ新規 */
@@ -41,18 +43,10 @@ function loadDrawing(): Drawing {
   return sampleDrawing();
 }
 
-/** 初回はサンプル（6畳 3640×2730 の外形）を表示して、何ができるか分かるようにする */
+/** 初回はサンプル（RC造の通り芯 3×2スパン）を表示して、何ができるか分かるようにする */
 function sampleDrawing(): Drawing {
   const d = createDrawing();
-  const pts = [
-    { x: 0, y: 0 },
-    { x: 3640, y: 0 },
-    { x: 3640, y: 2730 },
-    { x: 0, y: 2730 },
-  ];
-  for (let i = 0; i < 4; i++) {
-    d.entities.push({ id: newId(), kind: 'line', layer: '0', a: pts[i], b: pts[(i + 1) % 4] });
-  }
+  d.grid = { xSpans: [6000, 7200, 6000], ySpans: [6500, 6500], xPrefix: 'X', yPrefix: 'Y', origin: { x: 0, y: 0 } };
   isSample = true;
   return d;
 }
@@ -67,7 +61,7 @@ function saveDrawing() {
 
 function commit(mutator: () => void) {
   isSample = false;
-  history.push(drawing.entities.map((e) => structuredClone(e)));
+  history.push(structuredClone(drawing));
   if (history.length > 200) history.shift();
   mutator();
   saveDrawing();
@@ -84,7 +78,13 @@ function requestRender() {
 
 function frame() {
   needsRender = false;
-  render(ctx, cssW, cssH, { drawing, view, grid, pending, cursor }, theme);
+  render(
+    ctx,
+    cssW,
+    cssH,
+    { prims: decompose(drawing), view, grid, centerPattern: centerPattern(drawing.scale), pending, cursor },
+    theme,
+  );
   updateStatus();
 }
 
@@ -105,20 +105,13 @@ function resize() {
 }
 
 function fitView() {
-  if (drawing.entities.length === 0) {
+  const ext = primExtents(decompose(drawing));
+  if (!ext) {
     // 何もなければ原点付近の 10m 四方を表示
     view.fit({ x: -1000, y: -1000 }, { x: 9000, y: 9000 }, cssW, cssH);
     return;
   }
-  let min = { x: Infinity, y: Infinity };
-  let max = { x: -Infinity, y: -Infinity };
-  for (const e of drawing.entities) {
-    for (const p of [e.a, e.b]) {
-      min = { x: Math.min(min.x, p.x), y: Math.min(min.y, p.y) };
-      max = { x: Math.max(max.x, p.x), y: Math.max(max.y, p.y) };
-    }
-  }
-  view.fit(min, max, cssW, cssH);
+  view.fit(ext.min, ext.max, cssW, cssH, 16);
 }
 
 function flash(msg: string) {
@@ -138,13 +131,14 @@ function updateStatus() {
     return;
   }
   if (isSample && !pending) {
-    statusEl.textContent = 'サンプル（6畳の外形）を表示中。タップで線を引けます';
+    statusEl.textContent = 'サンプルの通り芯を表示中。「通り芯」でスパンを変更できます';
     return;
   }
   const parts: string[] = [];
   if (cursor) {
     parts.push(`X ${fmt(cursor.point.x)}  Y ${fmt(cursor.point.y)}`);
     if (cursor.kind === 'endpoint') parts.push('端点');
+    if (cursor.kind === 'intersection') parts.push('通り芯交点');
   }
   if (pending && cursor) parts.push(`長さ ${fmt(distance(pending, cursor.point))}`);
   parts.push(`線 ${drawing.entities.length}本`);
@@ -177,7 +171,7 @@ function snapRadiusPx(type: string) {
 function updateCursor(screen: Vec2, type: string) {
   const world = view.toWorld(screen);
   const radius = snapRadiusPx(type) / view.scale;
-  cursor = snapPoint(world, drawing.entities, radius, grid, pending ? [pending] : []);
+  cursor = snapPoint(world, snapCandidates(drawing, pending ? [pending] : []), radius, grid);
   requestRender();
 }
 
@@ -321,7 +315,8 @@ const actions: Record<string, () => void> = {
   undo() {
     const prev = history.pop();
     if (!prev) return;
-    drawing.entities = prev;
+    drawing = prev;
+    syncGridForm();
     pending = null;
     saveDrawing();
     requestRender();
@@ -332,7 +327,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0) return;
+    if (drawing.entities.length === 0 && !drawing.grid) return;
     if (!clearArmed) {
       clearArmed = true;
       clearBtn.textContent = 'もう一度で消去';
@@ -343,12 +338,19 @@ const actions: Record<string, () => void> = {
     disarmClear();
     commit(() => {
       drawing.entities = [];
+      drawing.grid = undefined;
     });
+    syncGridForm();
     pending = null;
     flash('全部消しました（「戻す」で元に戻せます）');
   },
   exportDxf() {
     void exportDxf();
+  },
+  gridPanel() {
+    syncGridForm();
+    sheet.hidden = false;
+    gridX.focus();
   },
 };
 
@@ -417,6 +419,11 @@ gridSelect.addEventListener('change', () => {
 });
 
 window.addEventListener('keydown', (e) => {
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+    if (e.key === 'Escape') sheet.hidden = true;
+    return;
+  }
   if (e.key === 'Escape') actions.endChain();
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
@@ -427,6 +434,79 @@ window.addEventListener('keydown', (e) => {
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   theme = readTheme();
   requestRender();
+});
+
+// ---------- 通り芯パネル ----------
+
+const sheet = document.getElementById('grid-sheet') as HTMLElement;
+const gridX = document.getElementById('grid-x') as HTMLInputElement;
+const gridY = document.getElementById('grid-y') as HTMLInputElement;
+const scaleSelect = document.getElementById('scale') as HTMLSelectElement;
+const gridMsg = document.getElementById('grid-msg') as HTMLElement;
+const gridSummary = document.getElementById('grid-summary') as HTMLElement;
+
+function syncGridForm() {
+  const g = drawing.grid;
+  gridX.value = g ? g.xSpans.join(', ') : '';
+  gridY.value = g ? g.ySpans.join(', ') : '';
+  scaleSelect.value = String(drawing.scale);
+  gridMsg.textContent = '';
+  updateGridSummary();
+}
+
+function updateGridSummary() {
+  const xs = parseSpans(gridX.value);
+  const ys = parseSpans(gridY.value);
+  if (!xs || !ys) {
+    gridSummary.textContent = '';
+    return;
+  }
+  const total = (v: number[]) => formatDim(v.reduce((a, b) => a + b, 0));
+  gridSummary.textContent = `X1〜X${xs.length + 1}（計 ${total(xs)}）　Y1〜Y${ys.length + 1}（計 ${total(ys)}）`;
+}
+
+gridX.addEventListener('input', updateGridSummary);
+gridY.addEventListener('input', updateGridSummary);
+
+document.getElementById('grid-form')!.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const xs = parseSpans(gridX.value);
+  const ys = parseSpans(gridY.value);
+  if (!xs || !ys) {
+    gridMsg.textContent = '数字をカンマで区切って入力してください（例: 6000, 7200*2）';
+    return;
+  }
+  const scale = Number(scaleSelect.value);
+  commit(() => {
+    drawing.scale = scale;
+    drawing.grid = {
+      xSpans: xs,
+      ySpans: ys,
+      xPrefix: 'X',
+      yPrefix: 'Y',
+      origin: drawing.grid?.origin ?? { x: 0, y: 0 },
+    };
+  });
+  sheet.hidden = true;
+  fitView();
+  const { xs: px, ys: py } = gridPositions(drawing.grid!);
+  flash(`通り芯を描きました（X ${px.length}本・Y ${py.length}本、1/${scale}）`);
+});
+
+document.getElementById('grid-remove')!.addEventListener('click', () => {
+  if (!drawing.grid) {
+    sheet.hidden = true;
+    return;
+  }
+  commit(() => {
+    drawing.grid = undefined;
+  });
+  sheet.hidden = true;
+  flash('通り芯を消しました（「戻す」で元に戻せます）');
+});
+
+document.getElementById('grid-close')!.addEventListener('click', () => {
+  sheet.hidden = true;
 });
 
 new ResizeObserver(resize).observe(canvas);
