@@ -3,6 +3,7 @@ import { decomposeGrid } from './grid';
 import { decomposeColumns } from './column';
 import { decomposeBeams, decomposeWalls } from './wall';
 import { decomposeOffsetDims } from './offset-dims';
+import { decomposeAnnotations } from './annot';
 
 /**
  * 図面を構成する最小単位。画面描画と DXF/JWW 書き出しはこれだけを扱う。
@@ -45,6 +46,7 @@ export function decompose(drawing: Drawing): Prim[] {
   prims.push(...decomposeWalls(drawing));
   prims.push(...decomposeColumns(drawing));
   if (drawing.showOffsetDims) prims.push(...decomposeOffsetDims(drawing));
+  prims.push(...decomposeAnnotations(drawing));
   for (const e of drawing.entities) {
     if (e.kind === 'line') prims.push({ t: 'line', layer: e.layer, a: e.a, b: e.b });
   }

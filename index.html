@@ -73,6 +73,13 @@
             <button id="btn-opening" data-action="opening" data-mode="opening" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9h7M15 9h7M2 15h7M15 15h7M9 9v6M15 9v6"/></svg>開口</button>
             <button id="btn-beam" data-action="beam" data-mode="beam" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9h20M2 15h20" stroke-dasharray="3 2"/></svg>梁</button>
           </div>
+          <p class="palette-head">注記</p>
+          <div class="palette-grid">
+            <button id="btn-dim" data-action="dim" data-mode="dim" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 15h16M4 11v8M20 11v8M3 17l2-2M19 17l2-2"/></svg>寸法</button>
+            <button id="btn-note" data-action="note" data-mode="note" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20h16M7 16l5-12 5 12M9 12h6"/></svg>文字</button>
+            <button id="btn-level" data-action="level" data-mode="level" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 14l-5 6M12 14l5 6M9 20h6"/><path d="M3 14h18"/></svg>レベル</button>
+          </div>
+
           <p class="palette-head">作図・確認</p>
           <div class="palette-grid">
             <button id="btn-line" data-action="line" data-mode="line" class="tool active" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20L20 4"/><circle cx="4" cy="20" r="1.6" fill="currentColor"/><circle cx="20" cy="4" r="1.6" fill="currentColor"/></svg>線</button>
@@ -242,6 +249,22 @@
             <button type="submit" id="beam-ok" class="primary">通り芯の区間をタップして配置</button>
             <button type="button" id="beam-delete" hidden>この梁を削除</button>
             <button type="button" id="beam-close">閉じる</button>
+          </div>
+        </form>
+      </section>
+      <section id="annot-sheet" class="sheet" hidden aria-label="文字・レベルの設定">
+        <form id="annot-form" class="sheet-body" novalidate>
+          <h2 id="annot-title">文字</h2>
+          <p class="hint">置いた位置に入ります。入れたものをタップすると、文字を直したり消したりできます。</p>
+          <label class="field inline" for="annot-text">
+            <span>内容</span>
+            <input id="annot-text" type="text" autocomplete="off" />
+          </label>
+          <p id="annot-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="annot-ok" class="primary">この位置に入れる</button>
+            <button type="button" id="annot-delete" hidden>削除</button>
+            <button type="button" id="annot-close">閉じる</button>
           </div>
         </form>
       </section>

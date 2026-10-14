@@ -3,6 +3,7 @@ import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } from './snap';
 import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
+import { dimAt, levelAt, noteAt } from './arch/annot';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
@@ -32,7 +33,7 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset';
+type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
@@ -159,7 +160,7 @@ function frame() {
       cursor,
       underlay,
       alignFrom,
-      measure: mode === 'measure' ? measureView() : null,
+      measure: mode === 'measure' ? measureView() : mode === 'dim' ? dimView() : null,
     },
     theme,
   );
@@ -230,7 +231,7 @@ function updateStatus() {
     return;
   }
   if (mode === 'erase') {
-    statusEl.textContent = '消す: 線・柱・壁・開口・梁をタップ（下敷き・通り芯は消えません）';
+    statusEl.textContent = '消す: 線・柱・壁・開口・梁・寸法・文字・レベルをタップ（下敷き・通り芯は消えません）';
     return;
   }
   if (mode === 'offset') {
@@ -254,6 +255,20 @@ function updateStatus() {
   }
   if (mode === 'opening') {
     statusEl.textContent = `開口 幅${formatDim(opDefaultWidth)}: 壁をタップで配置／開口をタップで変更`;
+    return;
+  }
+  if (mode === 'dim') {
+    statusEl.textContent = dimPts.length === 0
+      ? '寸法: 1点目をタップ'
+      : dimPts.length === 1
+        ? '寸法: 2点目をタップ'
+        : '寸法線の位置をタップ（2点の外側・内側どちらでも）';
+    return;
+  }
+  if (mode === 'note' || mode === 'level') {
+    statusEl.textContent = mode === 'note'
+      ? '文字: 置く位置をタップ（文字をタップで編集）'
+      : 'レベル: 置く位置（▽の先）をタップ（記号をタップで編集）';
     return;
   }
   if (mode === 'column') {
@@ -535,6 +550,14 @@ function handleTap(screen: Vec2, type: string) {
     openingTap(screen, type);
     return;
   }
+  if (mode === 'dim') {
+    dimTap(screen, type);
+    return;
+  }
+  if (mode === 'note' || mode === 'level') {
+    annotTap(mode, screen, type);
+    return;
+  }
   updateCursor(screen, type);
   if (!cursor) return;
   const pt = { ...cursor.point };
@@ -555,6 +578,15 @@ function handleTap(screen: Vec2, type: string) {
 const actions: Record<string, () => void> = {
   line() {
     setMode('line');
+  },
+  dim() {
+    setMode('dim');
+  },
+  note() {
+    setMode('note');
+  },
+  level() {
+    setMode('level');
   },
   column() {
     setMode('column');
@@ -886,6 +918,9 @@ const MODE_LABEL: Record<Mode, string> = {
   measure: '測る',
   erase: '消す',
   offset: 'オフセット',
+  dim: '寸法',
+  note: '文字',
+  level: 'レベル',
 };
 
 function setPalette(open: boolean) {
@@ -1083,7 +1118,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -1091,6 +1126,7 @@ function setMode(next: Mode) {
   mode = next;
   measurePts = [];
   measureCurve = null;
+  dimPts = [];
   flashMsg = ''; // 前の操作のメッセージで、次の操作の案内が隠れないように
   pending = null;
   alignFrom = null;
@@ -1739,6 +1775,30 @@ function eraseTap(screen: Vec2, type: string) {
     flash('開口を消しました（「戻す」で元に戻せます）');
     return;
   }
+  const dim = dimAt(drawing, w, r);
+  if (dim) {
+    commit(() => {
+      drawing.dims = drawing.dims.filter((x) => x.id !== dim.id);
+    });
+    flash('寸法を消しました（「戻す」で元に戻せます）');
+    return;
+  }
+  const note = noteAt(drawing, w, r);
+  if (note) {
+    commit(() => {
+      drawing.notes = drawing.notes.filter((x) => x.id !== note.id);
+    });
+    flash('文字を消しました（「戻す」で元に戻せます）');
+    return;
+  }
+  const level = levelAt(drawing, w, r);
+  if (level) {
+    commit(() => {
+      drawing.levels = drawing.levels.filter((x) => x.id !== level.id);
+    });
+    flash('レベルを消しました（「戻す」で元に戻せます）');
+    return;
+  }
   const wall = wallPanel.hit(w) as Wall | undefined;
   const beam = beamPanel.hit(w) as Beam | undefined;
   if (col) {
@@ -2187,6 +2247,125 @@ function openingTap(screen: Vec2, type: string) {
   flash(`開口 幅${formatDim(width)} を入れました（タップで位置・幅を変更）`);
 }
 
+// ---------- 寸法・文字・レベル ----------
+
+const annotSheet = document.getElementById('annot-sheet') as HTMLElement;
+const annotTitle = document.getElementById('annot-title') as HTMLElement;
+const annotForm = document.getElementById('annot-form') as HTMLFormElement;
+const annotText = document.getElementById('annot-text') as HTMLInputElement;
+const annotMsg = document.getElementById('annot-msg') as HTMLElement;
+const annotOk = document.getElementById('annot-ok') as HTMLButtonElement;
+const annotDelete = document.getElementById('annot-delete') as HTMLButtonElement;
+
+/** 寸法: 確定した2点（3点目で寸法線の位置を決める） */
+let dimPts: Vec2[] = [];
+type AnnotKind = 'note' | 'level';
+let annotKind: AnnotKind = 'note';
+/** 編集中の文字・レベル（null なら新しく置く） */
+let annotEditId: string | null = null;
+/** 新しく置く位置 */
+let annotAt: Vec2 | null = null;
+
+/** 寸法の途中経過（測るの描画を流用。確定した点と、まだの点のカーソル） */
+function dimView() {
+  const pts = [...dimPts];
+  if (dimPts.length === 1 && cursor && distance(cursor.point, dimPts[0]) > 1e-6) pts.push(cursor.point);
+  return { kind: 'dist' as const, pts, fixed: dimPts.length, curve: null };
+}
+
+function dimTap(screen: Vec2, type: string) {
+  updateCursor(screen, type);
+  if (!cursor) return;
+  const p = { ...cursor.point };
+  if (dimPts.length < 2) {
+    dimPts.push(p);
+    requestRender();
+    return;
+  }
+  const [a, b] = dimPts;
+  const len = distance(a, b);
+  dimPts = [];
+  if (len < 1e-6) {
+    requestRender();
+    return;
+  }
+  // 法線（a→b の左側）方向の、タップ位置までの距離
+  const nx = -(b.y - a.y) / len;
+  const ny = (b.x - a.x) / len;
+  const off = Math.round((p.x - a.x) * nx + (p.y - a.y) * ny);
+  commit(() => {
+    drawing.dims.push({ id: newId(), a, b, off });
+  });
+  flash(`寸法 ${formatDim(Math.round(len))} を入れました（消すで削除、戻すで取消）`);
+}
+
+function annotTap(kind: AnnotKind, screen: Vec2, type: string) {
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+  const hit = kind === 'note' ? noteAt(drawing, w, r) : levelAt(drawing, w, r);
+  if (hit) {
+    openAnnotSheet(kind, hit.id, null);
+    return;
+  }
+  updateCursor(screen, type);
+  openAnnotSheet(kind, null, cursor ? { ...cursor.point } : w);
+}
+
+function openAnnotSheet(kind: AnnotKind, id: string | null, at: Vec2 | null) {
+  annotKind = kind;
+  annotEditId = id;
+  annotAt = at;
+  annotMsg.textContent = '';
+  const item = id ? (kind === 'note' ? drawing.notes.find((x) => x.id === id) : drawing.levels.find((x) => x.id === id)) : undefined;
+  annotTitle.textContent = kind === 'note' ? '文字' : 'レベル';
+  annotText.value = item ? item.s : kind === 'note' ? '' : 'FL±0';
+  annotText.placeholder = kind === 'note' ? '例: 注記・仕上げ・ピット' : '例: FL+3.500 / GL±0 / 天端 FL+2.800';
+  annotOk.textContent = item ? '変更を反映' : kind === 'note' ? 'この位置に入れる' : 'この位置に置く';
+  annotDelete.hidden = !item;
+  showSheet(annotSheet);
+}
+
+annotForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const s = annotText.value.normalize('NFKC').trim();
+  if (!s) {
+    annotMsg.textContent = '文字を入力してください';
+    return;
+  }
+  const kind = annotKind;
+  if (annotEditId) {
+    const id = annotEditId;
+    commit(() => {
+      const list = kind === 'note' ? drawing.notes : drawing.levels;
+      const it = list.find((x) => x.id === id);
+      if (it) it.s = s;
+    });
+    flash('変更しました');
+  } else if (annotAt) {
+    const at = annotAt;
+    commit(() => {
+      if (kind === 'note') drawing.notes.push({ id: newId(), p: at, s });
+      else drawing.levels.push({ id: newId(), p: at, s });
+    });
+    flash(kind === 'note' ? `文字「${s}」を入れました` : `レベル ${s} を置きました`);
+  }
+  showSheet(null);
+});
+
+annotDelete.addEventListener('click', () => {
+  if (!annotEditId) return;
+  const id = annotEditId;
+  const kind = annotKind;
+  commit(() => {
+    if (kind === 'note') drawing.notes = drawing.notes.filter((x) => x.id !== id);
+    else drawing.levels = drawing.levels.filter((x) => x.id !== id);
+  });
+  showSheet(null);
+  flash('削除しました（「戻す」で元に戻せます）');
+});
+
+document.getElementById('annot-close')!.addEventListener('click', () => showSheet(null));
+
 // ---------- レイヤー ----------
 
 const layerSheet = document.getElementById('layer-sheet') as HTMLElement;
@@ -2204,6 +2383,8 @@ const OWN_LAYER_LABEL: Record<string, string> = {
   WALL: '壁',
   BEAM: '梁',
   OPENING: '開口の表記',
+  NOTE: '文字',
+  LEVEL: 'レベル',
   '0': '線',
 };
 

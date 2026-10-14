@@ -125,6 +125,31 @@ export type Opening = {
   width: number;
 };
 
+/**
+ * 寸法（2点間の寸法線）。a→b の線分を、法線方向に off（mm）ずらして寸法線を引く。
+ * 寸法の値は a と b の距離から自動で出す。
+ */
+export type Dim = {
+  id: string;
+  a: Vec2;
+  b: Vec2;
+  off: number;
+};
+
+/** 文字（注記）。p が左下（ベースライン）の位置 */
+export type Note = {
+  id: string;
+  p: Vec2;
+  s: string;
+};
+
+/** レベル記号（▽ FL±0 など）。p がレベルの位置、s が表記 */
+export type LevelMark = {
+  id: string;
+  p: Vec2;
+  s: string;
+};
+
 export type Drawing = {
   version: 1;
   units: 'mm';
@@ -140,6 +165,9 @@ export type Drawing = {
   beamTypes: BeamType[];
   beams: Beam[];
   openings: Opening[];
+  dims: Dim[];
+  notes: Note[];
+  levels: LevelMark[];
   /** 柱・壁の寄り寸法（通り芯から各面まで）を描くか */
   showOffsetDims: boolean;
   /** 画面で隠している画層（DXF には全部出す） */
@@ -154,6 +182,8 @@ export const LAYER_COLUMN = 'COLUMN';
 export const LAYER_WALL = 'WALL';
 export const LAYER_BEAM = 'BEAM';
 export const LAYER_OPENING = 'OPENING';
+export const LAYER_NOTE = 'NOTE';
+export const LAYER_LEVEL = 'LEVEL';
 
 export function defaultBeamTypes(): BeamType[] {
   return [
@@ -180,6 +210,8 @@ export function defaultLayers(): Layer[] {
     { name: LAYER_WALL, color: 5 },
     { name: LAYER_BEAM, color: 6, linetype: 'HIDDEN' },
     { name: LAYER_OPENING, color: 2 },
+    { name: LAYER_NOTE, color: 7 },
+    { name: LAYER_LEVEL, color: 8 },
   ];
 }
 
@@ -197,6 +229,9 @@ export function createDrawing(): Drawing {
     beamTypes: defaultBeamTypes(),
     beams: [],
     openings: [],
+    dims: [],
+    notes: [],
+    levels: [],
     showOffsetDims: true,
   };
 }
@@ -216,6 +251,9 @@ export function normalizeDrawing(d: Drawing): Drawing {
   out.beamTypes = out.beamTypes?.length ? out.beamTypes : defaultBeamTypes();
   out.beams = out.beams ?? [];
   out.openings = out.openings ?? [];
+  out.dims = out.dims ?? [];
+  out.notes = out.notes ?? [];
+  out.levels = out.levels ?? [];
   out.showOffsetDims = out.showOffsetDims ?? true;
   return out;
 }
