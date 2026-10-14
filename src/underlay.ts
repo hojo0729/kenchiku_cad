@@ -1,7 +1,8 @@
 import type { Prim } from './arch/primitives';
 import { primExtents } from './arch/primitives';
 import type { Vec2 } from './model';
-import type { Segment, SnapCandidate } from './snap';
+import type { Curve, Segment, SnapCandidate } from './snap';
+import { primCurves } from './measure';
 import type { Viewport } from './viewport';
 
 /**
@@ -123,6 +124,15 @@ export function segmentIntersection(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | 
 let segCache: { prims: Prim[]; dx: number; dy: number; list: Segment[] } | null = null;
 
 /** 下敷きの線分（線上スナップ用）。ずらし量込み */
+let curveCache: { prims: readonly Prim[]; dx: number; dy: number; list: Curve[] } | null = null;
+/** 下敷きの円・円弧（位置合わせ量を足したもの。線上スナップと「測る」の円・円弧用） */
+export function underlayCurves(u: Underlay): Curve[] {
+  if (curveCache && curveCache.prims === u.prims && curveCache.dx === u.dx && curveCache.dy === u.dy) return curveCache.list;
+  const list = primCurves(u.prims, u.dx, u.dy);
+  curveCache = { prims: u.prims, dx: u.dx, dy: u.dy, list };
+  return list;
+}
+
 export function underlaySegments(u: Underlay): Segment[] {
   if (segCache && segCache.prims === u.prims && segCache.dx === u.dx && segCache.dy === u.dy) return segCache.list;
   const list: Segment[] = [];

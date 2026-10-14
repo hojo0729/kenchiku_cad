@@ -2,7 +2,8 @@ import type { Vec2 } from './model';
 import { LAYER_COLUMN, LAYER_DIM, LAYER_DIM_OFFSET, LAYER_GRID, LAYER_WALL } from './model';
 import type { Prim } from './arch/primitives';
 import { formatDim } from './arch/grid';
-import type { SnapResult } from './snap';
+import type { Curve, SnapResult } from './snap';
+import type { MeasureKind } from './measure';
 import type { Viewport } from './viewport';
 import { renderUnderlay, type Underlay } from './underlay';
 
@@ -55,8 +56,8 @@ export type RenderState = {
   underlay: Underlay | null;
   /** 位置合わせで選んだ下敷き側の点 */
   alignFrom: Vec2 | null;
-  /** 測る */
-  measure: { a: Vec2; b: Vec2 } | null;
+  /** 測る（pts は確定した点＋カーソル位置。fixed は確定した点の数） */
+  measure: { kind: MeasureKind; pts: Vec2[]; fixed: number; curve: Curve | null } | null;
 };
 
 export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: RenderState, theme: Theme): void {
@@ -139,41 +140,8 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     ctx.fill();
   }
 
-  // 測る: 2点間の線と距離
-  if (st.measure) {
-    const a = view.toScreen(st.measure.a);
-    const b = view.toScreen(st.measure.b);
-    const d = Math.hypot(st.measure.b.x - st.measure.a.x, st.measure.b.y - st.measure.a.y);
-    ctx.save();
-    ctx.strokeStyle = theme.preview;
-    ctx.fillStyle = theme.preview;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([8, 4]);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    for (const p of [a, b]) {
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    if (d > 0) {
-      const label = formatDim(d);
-      ctx.font = `600 14px ${theme.font}`;
-      const tw = ctx.measureText(label).width;
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2 - 14;
-      ctx.fillStyle = theme.canvas;
-      ctx.fillRect(mx - tw / 2 - 4, my - 11, tw + 8, 18);
-      ctx.fillStyle = theme.preview;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(label, mx, my - 2);
-    }
-    ctx.restore();
-  }
+  // 測る
+  if (st.measure) drawMeasure(ctx, st.measure, view, theme);
 
   // 位置合わせ: 選んだ下敷きの点からカーソルまで
   if (st.alignFrom) {
@@ -308,5 +276,93 @@ export function drawLoupe(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.restore();
+}
+
+function drawMeasure(ctx: CanvasRenderingContext2D, m: NonNullable<RenderState['measure']>, view: Viewport, theme: Theme) {
+  ctx.save();
+  ctx.strokeStyle = theme.preview;
+  ctx.fillStyle = theme.preview;
+  ctx.lineWidth = 2;
+
+  const label = (text: string, x: number, y: number) => {
+    ctx.font = `600 14px ${theme.font}`;
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = theme.canvas;
+    ctx.fillRect(x - tw / 2 - 4, y - 11, tw + 8, 18);
+    ctx.fillStyle = theme.preview;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y - 2);
+  };
+
+  if (m.kind === 'curve') {
+    if (m.curve) {
+      const c = view.toScreen(m.curve.c);
+      const r = m.curve.r * view.scale;
+      ctx.lineWidth = 4;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      if (m.curve.a0 === undefined || m.curve.a1 === undefined) ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      else ctx.arc(c.x, c.y, r, (-m.curve.a0 * Math.PI) / 180, (-m.curve.a1 * Math.PI) / 180, true);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      // 中心から半径の線（円弧なら始点へ、円なら右へ）
+      const ang = ((m.curve.a0 ?? 0) * Math.PI) / 180;
+      const e = { x: c.x + r * Math.cos(ang), y: c.y - r * Math.sin(ang) };
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(e.x, e.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      label(`R ${formatDim(m.curve.r)}`, (c.x + e.x) / 2, (c.y + e.y) / 2 - 14);
+    }
+    ctx.restore();
+    return;
+  }
+
+  const pts = m.pts.map((p) => view.toScreen(p));
+  if (pts.length === 0) {
+    ctx.restore();
+    return;
+  }
+  const closed = m.kind === 'area' && pts.length >= 3;
+  if (closed) {
+    ctx.globalAlpha = 0.12;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.setLineDash([8, 4]);
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  if (closed) ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  pts.forEach((p, i) => {
+    if (i >= m.fixed) return; // カーソル位置には点を打たない
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  // 区間ごとの長さ（面積のときは周りの各辺）
+  const n = closed ? pts.length : pts.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = m.pts[i];
+    const b = m.pts[(i + 1) % m.pts.length];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    if (d <= 0) continue;
+    const sa = pts[i];
+    const sb = pts[(i + 1) % pts.length];
+    if (Math.hypot(sb.x - sa.x, sb.y - sa.y) < 40 && m.kind !== 'dist') continue; // 短すぎる区間は数字を省く
+    label(formatDim(d), (sa.x + sb.x) / 2, (sa.y + sb.y) / 2 - 14);
+  }
   ctx.restore();
 }

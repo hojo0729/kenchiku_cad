@@ -219,9 +219,14 @@ html, body {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
   color: var(--muted);
-  white-space: nowrap;
+  line-height: 1.35;
+  /* スマホ幅でも測った値やメッセージが読めるよう2行まで折り返す */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .status.flash {
@@ -617,4 +622,24 @@ html, body {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);
+}
+
+/* 測る: 測り方の切り替え（下のバーのすぐ上に出す） */
+.measure-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  display: flex;
+  gap: 6px;
+  padding: 8px max(16px, env(safe-area-inset-left, 0px));
+  overflow-x: auto;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.measure-bar[hidden] { display: none; }
+.toolbar .measure-bar button {
+  padding: 0 12px;
+  font-size: 14px;
 }

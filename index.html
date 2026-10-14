@@ -67,6 +67,14 @@
             <button id="btn-erase" data-action="erase" data-mode="erase" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>消す</button>
           </div>
         </div>
+        <div id="measure-bar" class="measure-bar" hidden role="group" aria-label="測り方">
+          <button data-measure="dist" aria-pressed="true">距離</button>
+          <button data-measure="chain" aria-pressed="false">連続</button>
+          <button data-measure="curve" aria-pressed="false">円・円弧</button>
+          <button data-measure="area" aria-pressed="false">面積</button>
+          <button id="measure-back" data-measure-cmd="back">1点戻す</button>
+          <button id="measure-clear" data-measure-cmd="clear">クリア</button>
+        </div>
         <button id="btn-tools" class="tools-button" aria-haspopup="true" aria-expanded="false" aria-controls="palette">
           <span class="tools-label">道具</span><span id="tools-current" class="tools-current">線</span><span class="caret" aria-hidden="true"></span>
         </button>

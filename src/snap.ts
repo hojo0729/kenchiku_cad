@@ -7,6 +7,8 @@ import { wallCorners } from './arch/wall';
 export type SnapKind = 'endpoint' | 'intersection' | 'online' | 'grid' | 'none';
 /** 線分（線上スナップ用） */
 export type Segment = { a: Vec2; b: Vec2 };
+/** 円・円弧（線上スナップ用）。a0/a1 は反時計回りの度。無ければ円 */
+export type Curve = { c: Vec2; r: number; a0?: number; a1?: number };
 export type SnapResult = { point: Vec2; kind: SnapKind };
 export type SnapCandidate = { p: Vec2; kind: 'endpoint' | 'intersection' };
 
@@ -44,6 +46,7 @@ export function snapPoint(
   radius: number,
   grid: number,
   segments: readonly Segment[] = [],
+  curves: readonly Curve[] = [],
 ): SnapResult {
   let best: SnapResult | null = null;
   let bestScore = Infinity;
@@ -58,6 +61,15 @@ export function snapPoint(
   }
   for (const s of segments) {
     const f = nearestOnSegment(raw, s.a, s.b);
+    const d = distance(raw, f);
+    if (d > radius || d >= bestScore) continue;
+    bestScore = d;
+    best = { point: f, kind: 'online' };
+  }
+  for (const cv of curves) {
+    // 中心から遠い円は先にはじく（数が多い下敷きでも軽く）
+    if (Math.abs(distance(raw, cv.c) - cv.r) > radius) continue;
+    const f = nearestOnCurve(raw, cv);
     const d = distance(raw, f);
     if (d > radius || d >= bestScore) continue;
     bestScore = d;
@@ -82,4 +94,27 @@ export function nearestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   if (len2 === 0) return { ...a };
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
   return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/** 0〜360 に正規化した角度（度） */
+export function normDeg(a: number): number {
+  return ((a % 360) + 360) % 360;
+}
+
+/** 角度 deg が円弧 a0→a1（反時計回り）の範囲に入るか */
+export function onArc(deg: number, a0: number, a1: number): boolean {
+  const sweep = normDeg(a1 - a0) || 360;
+  return normDeg(deg - a0) <= sweep + 1e-9;
+}
+
+/** 円・円弧の上で p にいちばん近い点（円弧の外なら近いほうの端） */
+export function nearestOnCurve(p: Vec2, cv: Curve): Vec2 {
+  const dx = p.x - cv.c.x;
+  const dy = p.y - cv.c.y;
+  const at = (deg: number) => ({ x: cv.c.x + cv.r * Math.cos((deg * Math.PI) / 180), y: cv.c.y + cv.r * Math.sin((deg * Math.PI) / 180) });
+  const deg = dx === 0 && dy === 0 ? (cv.a0 ?? 0) : (Math.atan2(dy, dx) * 180) / Math.PI;
+  if (cv.a0 === undefined || cv.a1 === undefined || onArc(deg, cv.a0, cv.a1)) return at(deg);
+  const e0 = at(cv.a0);
+  const e1 = at(cv.a1);
+  return distance(p, e0) <= distance(p, e1) ? e0 : e1;
 }

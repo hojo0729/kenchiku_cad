@@ -1,6 +1,7 @@
 import { createDrawing, distance, LAYER_DIM, LAYER_DIM_OFFSET, newId, normalizeDrawing, type Beam, type BeamType, type Drawing, type Vec2, type Wall, type WallType } from './model';
 import { Viewport } from './viewport';
-import { snapCandidates, snapPoint, type Segment, type SnapResult } from './snap';
+import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } from './snap';
+import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
@@ -9,7 +10,7 @@ import { beamRect, gridSpans, nextBeamMark, nextWallMark, openingRange, spanName
 import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
 import { decodeDxf, readDxf } from './import/dxf-read';
 import { drawingFromJson, extractEmbedded, isZip, unzipFirst } from './export/native';
-import { loadUnderlay, saveUnderlay, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
+import { loadUnderlay, saveUnderlay, underlayCurves, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
 import { toDxfBytes } from './export/dxf';
 import { zipStore } from './export/zip';
@@ -33,9 +34,10 @@ type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
-/** 測る: 1点目と（確定した）2点目 */
-let measureA: Vec2 | null = null;
-let measureB: Vec2 | null = null;
+/** 測る: 測り方、置いた点、選んだ円・円弧 */
+let measureKind: MeasureKind = 'dist';
+let measurePts: Vec2[] = [];
+let measureCurve: Curve | null = null;
 /** オフセットの距離(mm) */
 let offsetDist = 150;
 let underlay: Underlay | null = loadUnderlay();
@@ -155,7 +157,7 @@ function frame() {
       cursor,
       underlay,
       alignFrom,
-      measure: measureA ? { a: measureA, b: measureB ?? cursor?.point ?? measureA } : null,
+      measure: mode === 'measure' ? measureView() : null,
     },
     theme,
   );
@@ -222,11 +224,7 @@ function updateStatus() {
     return;
   }
   if (mode === 'measure') {
-    const b = measureB ?? (measureA ? cursor?.point : null);
-    statusEl.textContent =
-      measureA && b
-        ? `距離 ${formatDim(distance(measureA, b))}　X ${formatDim(Math.abs(b.x - measureA.x))}　Y ${formatDim(Math.abs(b.y - measureA.y))}`
-        : '測る: 1点目をタップ（長押しで吸着）';
+    statusEl.textContent = measureStatus();
     return;
   }
   if (mode === 'erase') {
@@ -330,11 +328,12 @@ function updateCursor(screen: Vec2, type: string) {
   if (mode === 'align') {
     cursor = alignFrom
       ? snapPoint(world, snapCandidates(drawing), radius, 0, ownSegments())
-      : snapPoint(world, ulPts, radius, 0, ulSegs);
+      : snapPoint(world, ulPts, radius, 0, ulSegs, allCurves());
   } else {
     const segs = ownSegments();
     for (const s of ulSegs) segs.push(s);
-    cursor = snapPoint(world, snapCandidates(drawing, pending ? [pending] : [], ulPts), radius, grid, segs);
+    const extra = mode === 'measure' ? measurePts : pending ? [pending] : [];
+    cursor = snapPoint(world, snapCandidates(drawing, extra, ulPts), radius, grid, segs, allCurves());
     if (ortho && mode === 'line' && pending) cursor = { point: orthoConstrain(pending, cursor.point), kind: cursor.kind === 'none' ? 'none' : 'grid' };
   }
   requestRender();
@@ -812,6 +811,8 @@ document.addEventListener('pointerdown', (e) => {
 /** 下のバーを今の状態に合わせる（道具の名前、直交は線のときだけ、「やめる」は操作中だけ） */
 function updateToolbar() {
   toolsCurrent.textContent = MODE_LABEL[mode];
+  measureBar.hidden = mode !== 'measure';
+  (document.getElementById('measure-back') as HTMLButtonElement).hidden = !(measureKind === 'chain' || measureKind === 'area');
   orthoBtn.hidden = mode !== 'line';
   endBtn.hidden = !(pending || mode !== 'line');
   endBtn.textContent = mode === 'line' ? '線を終える' : 'やめる';
@@ -988,8 +989,8 @@ function showSheet(target: HTMLElement | null) {
 
 function setMode(next: Mode) {
   mode = next;
-  measureA = null;
-  measureB = null;
+  measurePts = [];
+  measureCurve = null;
   flashMsg = ''; // 前の操作のメッセージで、次の操作の案内が隠れないように
   pending = null;
   alignFrom = null;
@@ -1528,16 +1529,88 @@ function offsetTap(screen: Vec2, type: string) {
 // ---------- 測る ----------
 
 function measureTap(screen: Vec2, type: string) {
+  if (measureKind === 'curve') {
+    // 円・円弧: タップした位置にいちばん近い円・円弧を選ぶ（長押しはカーソル位置で）
+    const p = type === 'press' && cursor ? cursor.point : view.toWorld(screen);
+    measureCurve = pickCurve(p, allCurves(), snapRadiusPx(type === 'press' ? 'touch' : type) / view.scale);
+    if (!measureCurve) flash('円・円弧が見つかりません。円の線の上をタップしてください');
+    requestRender();
+    return;
+  }
   updateCursor(screen, type);
   if (!cursor) return;
-  if (!measureA || measureB) {
-    measureA = { ...cursor.point };
-    measureB = null;
-  } else {
-    measureB = { ...cursor.point };
-  }
+  if (measureKind === 'dist' && measurePts.length >= 2) measurePts = [];
+  measurePts.push({ ...cursor.point });
   requestRender();
 }
+
+/** 自分の図面の円は通り芯の符号だけなので、測る・吸着の対象は下敷きの円・円弧 */
+function allCurves(): Curve[] {
+  return underlay?.visible ? underlayCurves(underlay) : [];
+}
+
+/** 置いた点に、まだ確定していないカーソル位置を足したもの（ラバーバンド表示・途中経過用） */
+function measureLive(): Vec2[] {
+  const pts = [...measurePts];
+  const done = measureKind === 'dist' && pts.length >= 2;
+  // 最後に置いた点と同じ位置（タップ直後）なら足さない
+  if (!done && pts.length > 0 && cursor && distance(cursor.point, pts[pts.length - 1]) > 1e-6) pts.push(cursor.point);
+  return pts;
+}
+
+function measureView() {
+  return { kind: measureKind, pts: measureLive(), fixed: measurePts.length, curve: measureCurve };
+}
+
+function measureStatus(): string {
+  const pts = measureLive();
+  switch (measureKind) {
+    case 'dist': {
+      if (pts.length < 2) return '距離: 1点目をタップ（長押しで吸着）';
+      const [a, b] = pts;
+      return `距離 ${formatDim(distance(a, b))}　X ${formatDim(Math.abs(b.x - a.x))}　Y ${formatDim(Math.abs(b.y - a.y))}　${formatDeg(direction(a, b).fromHorizontal)}`;
+    }
+    case 'chain': {
+      if (pts.length < 2) return '連続: 点を順にタップ。合計の長さを出します';
+      const n = pts.length - 1;
+      const last = distance(pts[n - 1], pts[n]);
+      const ang = n >= 2 ? `　角 ${formatDeg(cornerAngle(pts[n - 2], pts[n - 1], pts[n]))}` : '';
+      return `合計 ${formatDim(polylineLength(pts))}（${n}区間）　最後 ${formatDim(last)}${ang}`;
+    }
+    case 'area': {
+      if (pts.length < 3) return `面積: 角を順にタップ（${pts.length}点）。3点から面積を出します`;
+      return `面積 ${formatArea(polygonArea(pts))}　周長 ${formatDim(polygonPerimeter(pts))}（${pts.length}点）`;
+    }
+    case 'curve': {
+      if (!measureCurve) return allCurves().length ? '円・円弧: 円か円弧の線をタップ' : '円・円弧: 下敷きに円・円弧がありません';
+      const i = curveInfo(measureCurve);
+      return i.sweep === undefined
+        ? `円 半径 ${formatDim(i.r)}　直径 ${formatDim(i.diameter)}　円周 ${formatDim(i.circumference!)}`
+        : `円弧 半径 ${formatDim(i.r)}　弧長 ${formatDim(i.arcLength!)}　弦 ${formatDim(i.chord!)}　${formatDeg(i.sweep)}`;
+    }
+  }
+}
+
+// 測り方の切り替え
+const measureBar = document.getElementById('measure-bar') as HTMLElement;
+measureBar.addEventListener('click', (e) => {
+  const btn = (e.target as HTMLElement).closest('button');
+  if (!btn) return;
+  const kind = btn.dataset.measure as MeasureKind | undefined;
+  if (kind) {
+    measureKind = kind;
+    measurePts = [];
+    measureCurve = null;
+    for (const b of measureBar.querySelectorAll<HTMLButtonElement>('[data-measure]')) b.setAttribute('aria-pressed', String(b === btn));
+  } else if (btn.dataset.measureCmd === 'back') {
+    measurePts.pop();
+  } else if (btn.dataset.measureCmd === 'clear') {
+    measurePts = [];
+    measureCurve = null;
+  }
+  cursor = null; // 置いた点だけで表示し直す（消した点の位置にカーソルが残って見えないように）
+  requestRender();
+});
 
 // ---------- 消す ----------
 
