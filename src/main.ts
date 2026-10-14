@@ -4,6 +4,8 @@ import { snapCandidates, snapPoint, type SnapResult } from './snap';
 import { centerPattern, decompose, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
+import { readDxf } from './import/dxf-read';
+import { loadUnderlay, saveUnderlay, underlayExtents, underlaySnapCandidates, type Underlay } from './underlay';
 import { readTheme, render, type Theme } from './renderer';
 import { toDxf } from './export/dxf';
 import { zipStore } from './export/zip';
@@ -23,7 +25,10 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-let mode: 'line' | 'column' = 'line';
+let mode: 'line' | 'column' | 'align' = 'line';
+let underlay: Underlay | null = loadUnderlay();
+/** 位置合わせで選んだ下敷き側の点 */
+let alignFrom: Vec2 | null = null;
 let currentTypeId = drawing.columnTypes[0].id;
 let cursor: SnapResult | null = null;
 let theme: Theme = readTheme();
@@ -98,7 +103,16 @@ function frame() {
     ctx,
     cssW,
     cssH,
-    { prims: decompose(drawing), view, grid, centerPattern: centerPattern(drawing.scale), pending, cursor },
+    {
+      prims: decompose(drawing),
+      view,
+      grid,
+      centerPattern: centerPattern(drawing.scale),
+      pending,
+      cursor,
+      underlay,
+      alignFrom,
+    },
     theme,
   );
   updateStatus();
@@ -121,7 +135,15 @@ function resize() {
 }
 
 function fitView() {
-  const ext = primExtents(decompose(drawing));
+  const own = primExtents(decompose(drawing));
+  const ul = underlay?.visible ? underlayExtents(underlay) : null;
+  const ext =
+    own && ul
+      ? {
+          min: { x: Math.min(own.min.x, ul.min.x), y: Math.min(own.min.y, ul.min.y) },
+          max: { x: Math.max(own.max.x, ul.max.x), y: Math.max(own.max.y, ul.max.y) },
+        }
+      : own ?? ul;
   if (!ext) {
     // 何もなければ原点付近の 10m 四方を表示
     view.fit({ x: -1000, y: -1000 }, { x: 9000, y: 9000 }, cssW, cssH);
@@ -144,6 +166,12 @@ function updateStatus() {
   statusEl.classList.toggle('flash', !!flashMsg);
   if (flashMsg) {
     statusEl.textContent = flashMsg;
+    return;
+  }
+  if (mode === 'align') {
+    statusEl.textContent = alignFrom
+      ? '合わせたい点（通り芯の交点など）をタップ'
+      : '下敷きの点（設計図の通り芯の交点など）をタップ';
     return;
   }
   if (mode === 'column') {
@@ -194,7 +222,11 @@ function snapRadiusPx(type: string) {
 function updateCursor(screen: Vec2, type: string) {
   const world = view.toWorld(screen);
   const radius = snapRadiusPx(type) / view.scale;
-  cursor = snapPoint(world, snapCandidates(drawing, pending ? [pending] : []), radius, grid);
+  const ul = underlay?.visible ? underlaySnapCandidates(underlay) : [];
+  // 位置合わせの1点目は下敷きの点だけ、2点目は自分の図面の点だけに吸着
+  const candidates =
+    mode === 'align' && !alignFrom ? ul : mode === 'align' ? snapCandidates(drawing) : snapCandidates(drawing, pending ? [pending] : [], ul);
+  cursor = snapPoint(world, candidates, radius, mode === 'align' ? 0 : grid);
   requestRender();
 }
 
@@ -310,6 +342,10 @@ canvas.addEventListener(
 );
 
 function handleTap(screen: Vec2, type: string) {
+  if (mode === 'align') {
+    alignTap(screen, type);
+    return;
+  }
   if (mode === 'column') {
     columnTap(screen, type);
     return;
@@ -340,6 +376,11 @@ const actions: Record<string, () => void> = {
     openColumnSheet(null);
   },
   endChain() {
+    if (mode === 'align') {
+      setMode('line');
+      flash('位置合わせをやめました');
+      return;
+    }
     pending = null;
     requestRender();
   },
@@ -384,6 +425,10 @@ const actions: Record<string, () => void> = {
   gridPanel() {
     syncGridForm();
     showSheet(sheet);
+  },
+  underlayPanel() {
+    syncUnderlayForm();
+    showSheet(ulSheet);
   },
 };
 
@@ -546,13 +591,15 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet]) el.hidden = el !== target;
   requestRender();
 }
 
-function setMode(next: 'line' | 'column') {
+function setMode(next: 'line' | 'column' | 'align') {
   mode = next;
+  flashMsg = ''; // 前の操作のメッセージで、次の操作の案内が隠れないように
   pending = null;
+  alignFrom = null;
   document.getElementById('btn-line')!.classList.toggle('active', next === 'line');
   document.getElementById('btn-column')!.classList.toggle('active', next === 'column');
   requestRender();
@@ -845,6 +892,179 @@ function columnTap(screen: Vec2, type: string) {
     drawing.columns.push({ id: newId(), typeId: t.id, xi: ix.xi, yi: ix.yi, left, bottom });
   });
   flash(`${t.mark}（${t.bx}×${t.by}）を ${intersectionName(drawing, ix.xi, ix.yi)} に配置しました`);
+}
+
+// ---------- 下敷き ----------
+
+const ulSheet = document.getElementById('ul-sheet') as HTMLElement;
+const ulFile = document.getElementById('ul-file') as HTMLInputElement;
+const ulInfo = document.getElementById('ul-info') as HTMLElement;
+const ulMsg = document.getElementById('ul-msg') as HTMLElement;
+const ulControls = document.getElementById('ul-controls') as HTMLElement;
+const ulVisible = document.getElementById('ul-visible') as HTMLInputElement;
+const ulOpacity = document.getElementById('ul-opacity') as HTMLInputElement;
+const ulRemove = document.getElementById('ul-remove') as HTMLButtonElement;
+
+function describeUnderlay(u: Underlay): string {
+  let lines = 0;
+  let arcs = 0;
+  let texts = 0;
+  for (const p of u.prims) {
+    if (p.t === 'line') lines++;
+    else if (p.t === 'text') texts++;
+    else arcs++;
+  }
+  const e = underlayExtents(u);
+  const size = e ? `　範囲 ${formatDim(e.max.x - e.min.x)} × ${formatDim(e.max.y - e.min.y)}` : '';
+  return `${u.name}　線 ${lines}・円と円弧 ${arcs}・文字 ${texts}${size}`;
+}
+
+function syncUnderlayForm() {
+  ulMsg.textContent = '';
+  disarmUlRemove();
+  ulControls.hidden = !underlay;
+  if (underlay) {
+    ulInfo.textContent = describeUnderlay(underlay);
+    ulVisible.checked = underlay.visible;
+    ulOpacity.value = String(Math.round(underlay.opacity * 100));
+  } else {
+    ulInfo.textContent = 'まだ読み込んでいません';
+  }
+}
+
+ulFile.addEventListener('change', async () => {
+  const file = ulFile.files?.[0];
+  ulFile.value = '';
+  if (!file) return;
+  ulMsg.textContent = '';
+  if (/\.jww$/i.test(file.name)) {
+    ulMsg.textContent = 'JWW は今は直接読めません。Jw_cad で「DXF形式で保存」したファイルを選んでください';
+    return;
+  }
+  if (/\.dwg$/i.test(file.name)) {
+    ulMsg.textContent = 'DWG は直接読めません。PC で DXF に変換（ODA File Converter など）してから選んでください';
+    return;
+  }
+  ulInfo.textContent = `${file.name} を読み込み中…`;
+  try {
+    const result = readDxf(new Uint8Array(await file.arrayBuffer()));
+    const ext = primExtents(result.prims);
+    if (!ext) throw new Error('表示できる図形がありませんでした');
+
+    // 最初の位置: 自分の図面があればその中心に、無ければ左下を原点に置く（あとで「位置を合わせる」で正確に）
+    const own = primExtents(decompose(drawing));
+    const dx = own ? (own.min.x + own.max.x) / 2 - (ext.min.x + ext.max.x) / 2 : -ext.min.x;
+    const dy = own ? (own.min.y + own.max.y) / 2 - (ext.min.y + ext.max.y) / 2 : -ext.min.y;
+    underlay = { name: file.name, prims: result.prims, dx, dy, visible: true, opacity: 0.6 };
+    const saved = saveUnderlay(underlay);
+    syncUnderlayForm();
+
+    const notes: string[] = [...result.warnings];
+    const skipped = Object.entries(result.stats.skipped)
+      .filter(([type]) => type !== 'POINT')
+      .map(([type, n]) => `${type} ${n}`);
+    if (skipped.length) notes.push(`表示していない図形: ${skipped.join('、')}`);
+    if (!saved) notes.push('図面が大きくて端末に保存できませんでした。表示はできますが、ページを開き直すと消えます');
+    ulMsg.textContent = notes.join('。');
+    fitView();
+    requestRender();
+    flash(`${file.name} を下敷きにしました`);
+  } catch (err) {
+    syncUnderlayForm();
+    ulMsg.textContent = err instanceof Error ? err.message : 'DXF として読めませんでした';
+  }
+});
+
+ulVisible.addEventListener('change', () => {
+  if (!underlay) return;
+  underlay.visible = ulVisible.checked;
+  saveUnderlay(underlay);
+  requestRender();
+});
+
+ulOpacity.addEventListener('input', () => {
+  if (!underlay) return;
+  underlay.opacity = Number(ulOpacity.value) / 100;
+  requestRender();
+});
+ulOpacity.addEventListener('change', () => {
+  if (underlay) saveUnderlay(underlay);
+});
+
+document.getElementById('ul-align')!.addEventListener('click', () => {
+  if (!underlay) return;
+  if (!underlay.visible) {
+    underlay.visible = true;
+    saveUnderlay(underlay);
+  }
+  setMode('align');
+  showSheet(null);
+});
+
+// 外すと読み込み直しになるので、2回タップで確定
+let ulRemoveArmed = false;
+let ulRemoveTimer = 0;
+function disarmUlRemove() {
+  ulRemoveArmed = false;
+  clearTimeout(ulRemoveTimer);
+  ulRemove.textContent = '下敷きを外す';
+  ulRemove.classList.remove('danger');
+}
+ulRemove.addEventListener('click', () => {
+  if (!underlay) return;
+  if (!ulRemoveArmed) {
+    ulRemoveArmed = true;
+    ulRemove.textContent = 'もう一度で外す';
+    ulRemove.classList.add('danger');
+    ulRemoveTimer = window.setTimeout(disarmUlRemove, 3000);
+    return;
+  }
+  disarmUlRemove();
+  underlay = null;
+  saveUnderlay(null);
+  syncUnderlayForm();
+  requestRender();
+  flash('下敷きを外しました');
+});
+
+document.getElementById('ul-close')!.addEventListener('click', () => showSheet(null));
+
+function alignTap(screen: Vec2, type: string) {
+  if (!underlay) {
+    setMode('line');
+    return;
+  }
+  updateCursor(screen, type);
+  if (!alignFrom) {
+    if (!cursor || cursor.kind === 'none') {
+      flash('下敷きの線の端点か交点をタップしてください（拡大すると選びやすくなります）');
+      return;
+    }
+    alignFrom = { ...cursor.point };
+    requestRender();
+    return;
+  }
+  if (!cursor) return;
+  const mx = cursor.point.x - alignFrom.x;
+  const my = cursor.point.y - alignFrom.y;
+  underlay.dx += mx;
+  underlay.dy += my;
+  saveUnderlay(underlay);
+  setMode('line');
+  flash(`下敷きを動かしました（X ${formatDim(mx)}・Y ${formatDim(my)}）`);
+}
+
+// 開発時だけ、自動テストから状態を見られるようにする（本番ビルドでは消える）
+if (import.meta.env.DEV) {
+  (window as unknown as { __cad: unknown }).__cad = {
+    view,
+    get underlay() {
+      return underlay;
+    },
+    get drawing() {
+      return drawing;
+    },
+  };
 }
 
 new ResizeObserver(resize).observe(canvas);

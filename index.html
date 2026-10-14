@@ -14,6 +14,7 @@
         <canvas id="canvas"></canvas>
       </main>
       <nav class="toolbar" aria-label="ツール">
+        <button id="btn-underlay" data-action="underlayPanel">下敷き</button>
         <button id="btn-gridline" data-action="gridPanel">通り芯</button>
         <button id="btn-column" data-action="column" class="tool">柱</button>
         <button id="btn-line" data-action="line" class="tool active">線</button>
@@ -62,6 +63,38 @@
             <button type="button" id="grid-close">閉じる</button>
           </div>
         </form>
+      </section>
+      <section id="ul-sheet" class="sheet" hidden aria-label="下敷きの設定">
+        <div class="sheet-body">
+          <h2>下敷き（設計図）</h2>
+          <p class="hint">設計から来た DXF を薄く表示して、その上に通り芯や柱を描きます。下敷きの線の端点や交点にもスナップします。</p>
+          <p class="hint">JWW は今は直接読めません。Jw_cad で「ファイル → DXF形式で保存」してから読み込んでください。DWG も DXF に変換してから。</p>
+          <div class="sheet-actions">
+            <label class="file-button primary" for="ul-file">DXFファイルを選ぶ</label>
+            <input id="ul-file" class="visually-hidden" type="file" />
+          </div>
+          <p id="ul-info" class="summary"></p>
+          <p id="ul-msg" class="error" role="alert"></p>
+          <div id="ul-controls" class="ul-controls">
+            <label class="field inline" for="ul-visible">
+              <span>表示する</span>
+              <input id="ul-visible" type="checkbox" />
+            </label>
+            <label class="field inline" for="ul-opacity">
+              <span>濃さ</span>
+              <input id="ul-opacity" type="range" min="10" max="100" step="5" />
+            </label>
+            <p class="hint">「位置を合わせる」: 下敷きの点（例: 設計図の X1・Y1 の交点）をタップ → 合わせたい点（こちらの通り芯の交点）をタップ。</p>
+            <div class="sheet-actions">
+              <button type="button" id="ul-align">位置を合わせる</button>
+              <button type="button" id="ul-remove">下敷きを外す</button>
+            </div>
+            <p class="hint">DXF保存には下敷きは含まれません（自分で描いた通り芯・柱・線だけ）。</p>
+          </div>
+          <div class="sheet-actions">
+            <button type="button" id="ul-close">閉じる</button>
+          </div>
+        </div>
       </section>
       <section id="col-sheet" class="sheet" hidden aria-label="柱の設定">
         <form id="col-form" class="sheet-body" novalidate>

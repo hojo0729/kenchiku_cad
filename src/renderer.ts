@@ -3,6 +3,7 @@ import { LAYER_COLUMN, LAYER_DIM, LAYER_GRID } from './model';
 import type { Prim } from './arch/primitives';
 import type { SnapResult } from './snap';
 import type { Viewport } from './viewport';
+import { renderUnderlay, type Underlay } from './underlay';
 
 export type Theme = {
   canvas: string;
@@ -14,6 +15,7 @@ export type Theme = {
   dim: string;
   preview: string;
   snap: string;
+  underlay: string;
   font: string;
 };
 
@@ -30,6 +32,7 @@ export function readTheme(): Theme {
     dim: v('--dim'),
     preview: v('--preview'),
     snap: v('--snap'),
+    underlay: v('--underlay'),
     font: v('--font-num') || 'monospace',
   };
 }
@@ -44,6 +47,9 @@ export type RenderState = {
   pending: Vec2 | null;
   /** カーソル位置（スナップ済み） */
   cursor: SnapResult | null;
+  underlay: Underlay | null;
+  /** 位置合わせで選んだ下敷き側の点 */
+  alignFrom: Vec2 | null;
 };
 
 export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: RenderState, theme: Theme): void {
@@ -52,6 +58,7 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
   ctx.fillRect(0, 0, w, h);
 
   drawSnapGrid(ctx, w, h, view, st.grid, theme);
+  if (st.underlay) renderUnderlay(ctx, w, h, st.underlay, view, theme.underlay, theme.font);
 
   const colorOf = (layer: string) => (layer === LAYER_GRID ? theme.gridLine : layer === LAYER_DIM ? theme.dim : theme.ink);
 
@@ -72,13 +79,15 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
-    } else if (p.t === 'circle') {
+    } else if (p.t === 'circle' || p.t === 'arc') {
       const c = view.toScreen(p.c);
       ctx.setLineDash([]);
       ctx.strokeStyle = colorOf(p.layer);
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(c.x, c.y, p.r * view.scale, 0, Math.PI * 2);
+      if (p.t === 'circle') ctx.arc(c.x, c.y, p.r * view.scale, 0, Math.PI * 2);
+      // 画面はY下向きなので角度の符号を反転し、反時計回り→時計回りとして描く
+      else ctx.arc(c.x, c.y, p.r * view.scale, (-p.a0 * Math.PI) / 180, (-p.a1 * Math.PI) / 180, true);
       ctx.stroke();
     } else {
       // スマホで全体を見たときも符号・寸法が読めるよう、画面上は最小 9px で表示する
@@ -117,6 +126,27 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     ctx.beginPath();
     ctx.arc(a.x, a.y, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // 位置合わせ: 選んだ下敷きの点からカーソルまで
+  if (st.alignFrom) {
+    const a = view.toScreen(st.alignFrom);
+    ctx.save();
+    ctx.strokeStyle = theme.preview;
+    ctx.fillStyle = theme.preview;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 6, 0, Math.PI * 2);
+    ctx.stroke();
+    if (st.cursor) {
+      const b = view.toScreen(st.cursor.point);
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // スナップマーカー（□=端点、×=交点、+=グリッド）

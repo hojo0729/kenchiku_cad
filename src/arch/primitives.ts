@@ -9,6 +9,8 @@ import { decomposeColumns } from './column';
 export type Prim =
   | { t: 'line'; layer: string; a: Vec2; b: Vec2; ltype?: 'CONTINUOUS' | 'CENTER' }
   | { t: 'circle'; layer: string; c: Vec2; r: number }
+  /** 円弧。a0→a1 へ反時計回り（度） */
+  | { t: 'arc'; layer: string; c: Vec2; r: number; a0: number; a1: number }
   | {
       t: 'text';
       layer: string;
@@ -55,7 +57,7 @@ export function primExtents(prims: readonly Prim[]): { min: Vec2; max: Vec2 } | 
     if (p.t === 'line') {
       add(p.a.x, p.a.y);
       add(p.b.x, p.b.y);
-    } else if (p.t === 'circle') {
+    } else if (p.t === 'circle' || p.t === 'arc') {
       add(p.c.x - p.r, p.c.y - p.r);
       add(p.c.x + p.r, p.c.y + p.r);
     } else {

@@ -214,6 +214,14 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
         point(10, p.c);
         g(40, p.r);
         break;
+      case 'arc':
+        g(0, 'ARC');
+        g(8, p.layer);
+        point(10, p.c);
+        g(40, p.r);
+        g(50, p.a0);
+        g(51, p.a1);
+        break;
       case 'text': {
         g(0, 'TEXT');
         g(8, p.layer);

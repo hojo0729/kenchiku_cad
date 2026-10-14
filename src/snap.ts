@@ -8,8 +8,12 @@ export type SnapResult = { point: Vec2; kind: SnapKind };
 export type SnapCandidate = { p: Vec2; kind: 'endpoint' | 'intersection' };
 
 /** スナップ候補点: 線の端点と通り芯の交点 */
-export function snapCandidates(drawing: Drawing, extra: readonly Vec2[] = []): SnapCandidate[] {
-  const out: SnapCandidate[] = [];
+export function snapCandidates(
+  drawing: Drawing,
+  extra: readonly Vec2[] = [],
+  more: readonly SnapCandidate[] = [],
+): SnapCandidate[] {
+  const out: SnapCandidate[] = [...more];
   if (drawing.grid) for (const p of gridIntersections(drawing.grid)) out.push({ p, kind: 'intersection' });
   for (const p of columnCorners(drawing)) out.push({ p, kind: 'endpoint' });
   for (const e of drawing.entities) {
@@ -24,6 +28,7 @@ export function snapCandidates(drawing: Drawing, extra: readonly Vec2[] = []): S
 
 /**
  * 優先順位: 端点・交点 > グリッド > そのまま
+ * 交点（通り芯の交点など）は近くに柱の角があっても選ばれやすいよう、距離を半分として比べる
  * @param radius 拾う半径（ワールド単位 mm）
  * @param grid グリッド間隔(mm)。0ならグリッドスナップなし
  */
@@ -31,7 +36,7 @@ export function snapPoint(raw: Vec2, candidates: readonly SnapCandidate[], radiu
   let best: SnapCandidate | null = null;
   let bestD = radius;
   for (const c of candidates) {
-    const d = distance(raw, c.p);
+    const d = distance(raw, c.p) * (c.kind === 'intersection' ? 0.5 : 1);
     if (d <= bestD) {
       bestD = d;
       best = c;

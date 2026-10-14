@@ -47,3 +47,18 @@ describe('snapPoint', () => {
     expect(r).toEqual({ point: { x: 6000, y: 6500 }, kind: 'intersection' });
   });
 });
+
+describe('交点の優先', () => {
+  it('柱の角と通り芯の交点が同じくらい近いときは交点を選ぶ', () => {
+    const r = snapPoint(
+      { x: -70, y: -70 },
+      [
+        { p: { x: -150, y: -150 }, kind: 'endpoint' },
+        { p: { x: 0, y: 0 }, kind: 'intersection' },
+      ],
+      200,
+      0,
+    );
+    expect(r.kind).toBe('intersection');
+  });
+});
