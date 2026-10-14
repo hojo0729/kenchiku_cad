@@ -3,7 +3,7 @@ import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } from './snap';
 import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
-import { dimAt, levelAt, noteAt } from './arch/annot';
+import { dimAt, dimValue, levelAt, noteAt } from './arch/annot';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
@@ -33,7 +33,7 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level';
+type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
@@ -255,6 +255,10 @@ function updateStatus() {
   }
   if (mode === 'opening') {
     statusEl.textContent = `開口 幅${formatDim(opDefaultWidth)}: 壁をタップで配置／開口をタップで変更`;
+    return;
+  }
+  if (mode === 'edit') {
+    statusEl.textContent = '編集: 寸法・文字・レベル・開口・柱・壁・梁をタップして数字で直します';
     return;
   }
   if (mode === 'dim') {
@@ -554,6 +558,10 @@ function handleTap(screen: Vec2, type: string) {
     dimTap(screen, type);
     return;
   }
+  if (mode === 'edit') {
+    editTap(screen, type);
+    return;
+  }
   if (mode === 'note' || mode === 'level') {
     annotTap(mode, screen, type);
     return;
@@ -581,6 +589,9 @@ const actions: Record<string, () => void> = {
   },
   dim() {
     setMode('dim');
+  },
+  edit() {
+    setMode('edit');
   },
   note() {
     setMode('note');
@@ -921,6 +932,7 @@ const MODE_LABEL: Record<Mode, string> = {
   dim: '寸法',
   note: '文字',
   level: 'レベル',
+  edit: '編集',
 };
 
 function setPalette(open: boolean) {
@@ -1118,7 +1130,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -2365,6 +2377,95 @@ annotDelete.addEventListener('click', () => {
 });
 
 document.getElementById('annot-close')!.addEventListener('click', () => showSheet(null));
+
+// ---------- 寸法の数値編集・編集道具 ----------
+
+const dimSheet = document.getElementById('dim-sheet') as HTMLElement;
+const dimTitle = document.getElementById('dim-title') as HTMLElement;
+const dimForm = document.getElementById('dim-form') as HTMLFormElement;
+const dimOff = document.getElementById('dim-off') as HTMLInputElement;
+const dimAx = document.getElementById('dim-ax') as HTMLInputElement;
+const dimAy = document.getElementById('dim-ay') as HTMLInputElement;
+const dimBx = document.getElementById('dim-bx') as HTMLInputElement;
+const dimBy = document.getElementById('dim-by') as HTMLInputElement;
+const dimMsg = document.getElementById('dim-msg') as HTMLElement;
+const dimDelete = document.getElementById('dim-delete') as HTMLButtonElement;
+let dimEditId: string | null = null;
+
+function openDimSheet(id: string) {
+  const d = drawing.dims.find((x) => x.id === id);
+  if (!d) return;
+  dimEditId = id;
+  dimTitle.textContent = `寸法 ${dimValue(d)}`;
+  dimOff.value = String(d.off);
+  dimAx.value = String(Math.round(d.a.x));
+  dimAy.value = String(Math.round(d.a.y));
+  dimBx.value = String(Math.round(d.b.x));
+  dimBy.value = String(Math.round(d.b.y));
+  dimMsg.textContent = '';
+  showSheet(dimSheet);
+}
+
+dimForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const id = dimEditId;
+  if (!id) return;
+  const nums = [dimOff, dimAx, dimAy, dimBx, dimBy].map((el) => Number(el.value.normalize('NFKC').trim()));
+  if (nums.some((v) => !Number.isFinite(v))) {
+    dimMsg.textContent = '数字で入力してください（座標・位置は mm）';
+    return;
+  }
+  const [off, ax, ay, bx, by] = nums;
+  if (Math.hypot(bx - ax, by - ay) < 1) {
+    dimMsg.textContent = '両端が同じ位置になっています';
+    return;
+  }
+  commit(() => {
+    const d = drawing.dims.find((x) => x.id === id);
+    if (!d) return;
+    d.off = Math.round(off);
+    d.a = { x: ax, y: ay };
+    d.b = { x: bx, y: by };
+  });
+  flash('寸法を直しました');
+  showSheet(null);
+});
+
+dimDelete.addEventListener('click', () => {
+  const id = dimEditId;
+  if (!id) return;
+  commit(() => {
+    drawing.dims = drawing.dims.filter((x) => x.id !== id);
+  });
+  showSheet(null);
+  flash('寸法を削除しました（「戻す」で元に戻せます）');
+});
+
+document.getElementById('dim-close')!.addEventListener('click', () => showSheet(null));
+
+/** 編集道具: 今ある注記・部材をタップして、その編集画面を開く（種類を問わず） */
+function editTap(screen: Vec2, type: string) {
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+  const dim = dimAt(drawing, w, r);
+  if (dim) return openDimSheet(dim.id);
+  const note = noteAt(drawing, w, r);
+  if (note) return openAnnotSheet('note', note.id, null);
+  const level = levelAt(drawing, w, r);
+  if (level) return openAnnotSheet('level', level.id, null);
+  const op = openingAt(w, r);
+  if (op) return openOpeningSheet(op.id);
+  const col = drawing.columns.find((c) => {
+    const rc = columnRect(drawing, c);
+    return rc && w.x >= rc.min.x - r && w.x <= rc.max.x + r && w.y >= rc.min.y - r && w.y <= rc.max.y + r;
+  });
+  if (col) return openColumnSheet(col.id);
+  const wall = wallPanel.hit(w);
+  if (wall) return wallPanel.open(wall.id);
+  const beam = beamPanel.hit(w);
+  if (beam) return beamPanel.open(beam.id);
+  flash('編集できるもの（寸法・文字・レベル・開口・柱・壁・梁）をタップしてください');
+}
 
 // ---------- レイヤー ----------
 
