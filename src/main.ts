@@ -652,6 +652,7 @@ const actions: Record<string, () => void> = {
   },
   underlayPanel() {
     syncUnderlayForm();
+    if (inAndroidApp && !ulMsg.textContent) ulMsg.textContent = APP_HINT;
     showSheet(ulSheet);
   },
 };
@@ -679,6 +680,10 @@ async function exportDxf() {
     // claude.ai の公開ページ: .dxf は直接保存できないので zip に包む
     const downloads = (await host.use('downloads')) as DownloadsApi | null;
     if (!downloads) {
+      if (inAndroidApp) {
+        flash(APP_HINT);
+        return;
+      }
       flash('保存不可（downloads なし）: この画面では保存できません');
       return;
     }
@@ -1287,6 +1292,14 @@ const ulSheet = document.getElementById('ul-sheet') as HTMLElement;
 const ulFile = document.getElementById('ul-file') as HTMLInputElement;
 const ulInfo = document.getElementById('ul-info') as HTMLElement;
 const ulMsg = document.getElementById('ul-msg') as HTMLElement;
+
+/**
+ * Android のアプリ内表示（WebView。Claude アプリなど）ではファイル選択・保存が動かないことがある（Pixel で確認）。
+ * ブラウザ（Chrome）なら動くので、そちらで開くよう案内する。
+ */
+const inAndroidApp = /Android/.test(navigator.userAgent) && /; wv\)/.test(navigator.userAgent);
+const APP_HINT = 'アプリの中ではファイルを選べない・保存できないことがあります。動かないときはリンクを Chrome で開いてください';
+if (inAndroidApp) setTimeout(() => flash('ファイルの読み込み・保存は Chrome で開くと確実です'), 800);
 const ulControls = document.getElementById('ul-controls') as HTMLElement;
 const ulVisible = document.getElementById('ul-visible') as HTMLInputElement;
 const ulOpacity = document.getElementById('ul-opacity') as HTMLInputElement;
