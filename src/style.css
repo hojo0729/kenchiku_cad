@@ -286,6 +286,13 @@ html, body {
   outline-offset: 2px;
 }
 
+.toolbar button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
 .toolbar button.active {
   border-color: var(--accent);
   color: var(--accent);
@@ -528,3 +535,6 @@ html, body {
 .ul-controls .field.inline span { width: 4.5em; flex: none; }
 .ul-controls input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent); }
 .ul-controls input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+
+#off-sheet .field.inline span { width: 6em; flex: none; }
+#off-sheet .field.inline input { flex: 1; min-width: 0; }

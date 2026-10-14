@@ -1,6 +1,7 @@
 import type { Vec2 } from './model';
 import { LAYER_COLUMN, LAYER_DIM, LAYER_GRID } from './model';
 import type { Prim } from './arch/primitives';
+import { formatDim } from './arch/grid';
 import type { SnapResult } from './snap';
 import type { Viewport } from './viewport';
 import { renderUnderlay, type Underlay } from './underlay';
@@ -50,6 +51,8 @@ export type RenderState = {
   underlay: Underlay | null;
   /** 位置合わせで選んだ下敷き側の点 */
   alignFrom: Vec2 | null;
+  /** 測る */
+  measure: { a: Vec2; b: Vec2 } | null;
 };
 
 export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: RenderState, theme: Theme): void {
@@ -126,6 +129,42 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     ctx.beginPath();
     ctx.arc(a.x, a.y, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // 測る: 2点間の線と距離
+  if (st.measure) {
+    const a = view.toScreen(st.measure.a);
+    const b = view.toScreen(st.measure.b);
+    const d = Math.hypot(st.measure.b.x - st.measure.a.x, st.measure.b.y - st.measure.a.y);
+    ctx.save();
+    ctx.strokeStyle = theme.preview;
+    ctx.fillStyle = theme.preview;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 4]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of [a, b]) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (d > 0) {
+      const label = formatDim(d);
+      ctx.font = `600 14px ${theme.font}`;
+      const tw = ctx.measureText(label).width;
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2 - 14;
+      ctx.fillStyle = theme.canvas;
+      ctx.fillRect(mx - tw / 2 - 4, my - 11, tw + 8, 18);
+      ctx.fillStyle = theme.preview;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, mx, my - 2);
+    }
+    ctx.restore();
   }
 
   // 位置合わせ: 選んだ下敷きの点からカーソルまで

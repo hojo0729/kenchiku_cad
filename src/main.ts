@@ -4,6 +4,8 @@ import { snapCandidates, snapPoint, type Segment, type SnapResult } from './snap
 import { centerPattern, decompose, primExtents } from './arch/primitives';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
+import { detectGrid, toSpans } from './arch/grid-detect';
+import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
 import { readDxf } from './import/dxf-read';
 import { loadUnderlay, saveUnderlay, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
@@ -25,7 +27,15 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-let mode: 'line' | 'column' | 'align' = 'line';
+type Mode = 'line' | 'column' | 'align' | 'measure' | 'erase' | 'offset';
+let mode: Mode = 'line';
+/** 直交モード（線を水平・垂直に固定） */
+let ortho = false;
+/** 測る: 1点目と（確定した）2点目 */
+let measureA: Vec2 | null = null;
+let measureB: Vec2 | null = null;
+/** オフセットの距離(mm) */
+let offsetDist = 150;
 let underlay: Underlay | null = loadUnderlay();
 /** 位置合わせで選んだ下敷き側の点 */
 let alignFrom: Vec2 | null = null;
@@ -112,6 +122,7 @@ function frame() {
       cursor,
       underlay,
       alignFrom,
+      measure: measureA ? { a: measureA, b: measureB ?? cursor?.point ?? measureA } : null,
     },
     theme,
   );
@@ -174,6 +185,22 @@ function updateStatus() {
   statusEl.classList.toggle('flash', !!flashMsg);
   if (flashMsg) {
     statusEl.textContent = flashMsg;
+    return;
+  }
+  if (mode === 'measure') {
+    const b = measureB ?? (measureA ? cursor?.point : null);
+    statusEl.textContent =
+      measureA && b
+        ? `距離 ${formatDim(distance(measureA, b))}　X ${formatDim(Math.abs(b.x - measureA.x))}　Y ${formatDim(Math.abs(b.y - measureA.y))}`
+        : '測る: 1点目をタップ（長押しで吸着）';
+    return;
+  }
+  if (mode === 'erase') {
+    statusEl.textContent = '消す: 消したい線か柱をタップ（下敷き・通り芯は消えません）';
+    return;
+  }
+  if (mode === 'offset') {
+    statusEl.textContent = `オフセット ${formatDim(offsetDist)}: 線をタップ（タップした側に作ります）`;
     return;
   }
   if (mode === 'align') {
@@ -261,6 +288,7 @@ function updateCursor(screen: Vec2, type: string) {
     const segs = ownSegments();
     for (const s of ulSegs) segs.push(s);
     cursor = snapPoint(world, snapCandidates(drawing, pending ? [pending] : [], ulPts), radius, grid, segs);
+    if (ortho && mode === 'line' && pending) cursor = { point: orthoConstrain(pending, cursor.point), kind: cursor.kind === 'none' ? 'none' : 'grid' };
   }
   requestRender();
 }
@@ -418,6 +446,18 @@ canvas.addEventListener(
 );
 
 function handleTap(screen: Vec2, type: string) {
+  if (mode === 'measure') {
+    measureTap(screen, type);
+    return;
+  }
+  if (mode === 'erase') {
+    eraseTap(screen, type);
+    return;
+  }
+  if (mode === 'offset') {
+    offsetTap(screen, type);
+    return;
+  }
   if (mode === 'align') {
     alignTap(screen, type);
     return;
@@ -451,7 +491,28 @@ const actions: Record<string, () => void> = {
     setMode('column');
     openColumnSheet(null);
   },
+  ortho() {
+    ortho = !ortho;
+    document.getElementById('btn-ortho')!.setAttribute('aria-pressed', String(ortho));
+    flash(ortho ? '直交モード: 線を水平・垂直に固定します' : '直交モードを切りました');
+    requestRender();
+  },
+  offset() {
+    offInput.value = String(offsetDist);
+    offMsg.textContent = '';
+    showSheet(offSheet);
+  },
+  measure() {
+    setMode('measure');
+  },
+  erase() {
+    setMode('erase');
+  },
   endChain() {
+    if (mode === 'measure' || mode === 'erase' || mode === 'offset') {
+      setMode('line');
+      return;
+    }
     if (mode === 'align') {
       setMode('line');
       flash('位置合わせをやめました');
@@ -633,7 +694,12 @@ const scaleSelect = document.getElementById('scale') as HTMLSelectElement;
 const gridMsg = document.getElementById('grid-msg') as HTMLElement;
 const gridSummary = document.getElementById('grid-summary') as HTMLElement;
 
+/** 「下敷きから拾う」で決めた通り芯の原点（描くまで保留） */
+let detectedOrigin: Vec2 | null = null;
+
 function syncGridForm() {
+  detectedOrigin = null;
+  gridDetectMsg.hidden = true;
   const g = drawing.grid;
   gridX.value = g ? g.xSpans.join(', ') : '';
   gridY.value = g ? g.ySpans.join(', ') : '';
@@ -672,7 +738,7 @@ document.getElementById('grid-form')!.addEventListener('submit', (e) => {
       ySpans: ys,
       xPrefix: 'X',
       yPrefix: 'Y',
-      origin: drawing.grid?.origin ?? { x: 0, y: 0 },
+      origin: detectedOrigin ?? drawing.grid?.origin ?? { x: 0, y: 0 },
     };
     // 通り芯が減ったら、無くなった交点の柱も消す
     drawing.columns = drawing.columns.filter((c) => c.xi <= xs.length && c.yi <= ys.length);
@@ -701,17 +767,18 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet]) el.hidden = el !== target;
   requestRender();
 }
 
-function setMode(next: 'line' | 'column' | 'align') {
+function setMode(next: Mode) {
   mode = next;
+  measureA = null;
+  measureB = null;
   flashMsg = ''; // 前の操作のメッセージで、次の操作の案内が隠れないように
   pending = null;
   alignFrom = null;
-  document.getElementById('btn-line')!.classList.toggle('active', next === 'line');
-  document.getElementById('btn-column')!.classList.toggle('active', next === 'column');
+  document.querySelectorAll<HTMLElement>('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === next));
   requestRender();
 }
 
@@ -1162,6 +1229,118 @@ function alignTap(screen: Vec2, type: string) {
   saveUnderlay(underlay);
   setMode('line');
   flash(`下敷きを動かしました（X ${formatDim(mx)}・Y ${formatDim(my)}）`);
+}
+
+// ---------- 下敷きから通り芯を拾う ----------
+
+const gridDetectMsg = document.getElementById('grid-detect-msg') as HTMLElement;
+
+document.getElementById('grid-detect')!.addEventListener('click', () => {
+  gridMsg.textContent = '';
+  if (!underlay) {
+    gridMsg.textContent = '先にメニューの「下敷き」で設計図のDXFを読み込んでください';
+    return;
+  }
+  const g = detectGrid(underlay.prims);
+  if (!g) {
+    gridMsg.textContent = '下敷きから通り芯が見つかりませんでした。スパンを手で入力してください';
+    return;
+  }
+  gridX.value = toSpans(g.xs).join(', ');
+  gridY.value = toSpans(g.ys).join(', ');
+  detectedOrigin = { x: g.xs[0] + underlay.dx, y: g.ys[0] + underlay.dy };
+  updateGridSummary();
+  gridDetectMsg.hidden = false;
+  gridDetectMsg.textContent = g.byLayer
+    ? `通り芯の画層から X ${g.xs.length}本・Y ${g.ys.length}本 を拾いました。位置も下敷きに合わせます。確認して「描く」を押してください。`
+    : `通り芯の画層が見つからなかったので、長い縦線・横線から X ${g.xs.length}本・Y ${g.ys.length}本 を推定しました。外壁などが混ざっていないか確認してください。`;
+});
+
+// ---------- オフセット ----------
+
+const offSheet = document.getElementById('off-sheet') as HTMLElement;
+const offInput = document.getElementById('off-dist') as HTMLInputElement;
+const offMsg = document.getElementById('off-msg') as HTMLElement;
+
+document.getElementById('off-form')!.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = Number(offInput.value.normalize('NFKC').trim());
+  if (!(v > 0)) {
+    offMsg.textContent = '距離は 0 より大きい数字で入力してください';
+    return;
+  }
+  offsetDist = v;
+  setMode('offset');
+  showSheet(null);
+});
+document.getElementById('off-close')!.addEventListener('click', () => showSheet(null));
+
+/** オフセットの元にできる線: 自分の線・通り芯・柱の辺・下敷きの線（寸法線は除く） */
+function offsetSources(): Segment[] {
+  const segs: Segment[] = [];
+  for (const p of decompose(drawing)) if (p.t === 'line' && p.layer !== LAYER_DIM) segs.push({ a: p.a, b: p.b });
+  if (underlay?.visible) for (const s of underlaySegments(underlay)) segs.push(s);
+  return segs;
+}
+
+function offsetTap(screen: Vec2, type: string) {
+  const w = view.toWorld(screen);
+  const hit = nearestSegment(w, offsetSources(), snapRadiusPx(type) / view.scale);
+  if (!hit) {
+    flash('線の近くをタップしてください（長押しすると狙いやすいです）');
+    return;
+  }
+  // 長押しはカーソルが線の上に乗るので、どちら側かは指の位置（カーソルより下）で決める
+  const side = type === 'press' ? view.toWorld({ x: screen.x, y: screen.y + PRESS_OFFSET }) : w;
+  const s = offsetSegment(hit.seg, offsetDist, side);
+  commit(() => {
+    drawing.entities.push({ id: newId(), kind: 'line', layer: '0', a: s.a, b: s.b });
+  });
+  flash(`${formatDim(offsetDist)} オフセットしました`);
+}
+
+// ---------- 測る ----------
+
+function measureTap(screen: Vec2, type: string) {
+  updateCursor(screen, type);
+  if (!cursor) return;
+  if (!measureA || measureB) {
+    measureA = { ...cursor.point };
+    measureB = null;
+  } else {
+    measureB = { ...cursor.point };
+  }
+  requestRender();
+}
+
+// ---------- 消す ----------
+
+function eraseTap(screen: Vec2, type: string) {
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+  const col = drawing.columns.find((c) => {
+    const rc = columnRect(drawing, c);
+    return rc && w.x >= rc.min.x && w.x <= rc.max.x && w.y >= rc.min.y && w.y <= rc.max.y;
+  });
+  const lines = drawing.entities.filter((e) => e.kind === 'line');
+  const hit = nearestSegment(w, lines, r);
+  if (hit) {
+    const target = lines[hit.index];
+    commit(() => {
+      drawing.entities = drawing.entities.filter((e) => e.id !== target.id);
+    });
+    flash('線を消しました（「戻す」で元に戻せます）');
+    return;
+  }
+  if (col) {
+    const name = intersectionName(drawing, col.xi, col.yi);
+    commit(() => {
+      drawing.columns = drawing.columns.filter((c) => c.id !== col.id);
+    });
+    flash(`${name} の柱を消しました（「戻す」で元に戻せます）`);
+    return;
+  }
+  flash('ここには消せる線・柱がありません（下敷き・通り芯は消えません）');
 }
 
 // 開発時だけ、自動テストから状態を見られるようにする（本番ビルドでは消える）
