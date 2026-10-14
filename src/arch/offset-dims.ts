@@ -1,5 +1,5 @@
 import type { Drawing } from '../model';
-import { LAYER_DIM } from '../model';
+import { LAYER_DIM_OFFSET } from '../model';
 import { columnRect } from './column';
 import { formatDim, gridPositions } from './grid';
 import type { Prim } from './primitives';
@@ -25,11 +25,11 @@ export function dimChain(stops: number[], fixed: number, horizontal: boolean, k:
   const tick = 1 * k;
   const gap = 0.8 * k;
   const P = (along: number, across: number) => (horizontal ? { x: along, y: across } : { x: across, y: along });
-  const prims: Prim[] = [{ t: 'line', layer: LAYER_DIM, a: P(s[0], fixed), b: P(s[s.length - 1], fixed) }];
+  const prims: Prim[] = [{ t: 'line', layer: LAYER_DIM_OFFSET, a: P(s[0], fixed), b: P(s[s.length - 1], fixed) }];
   for (const v of s) {
     const a = horizontal ? { x: v - tick, y: fixed - tick } : { x: fixed - tick, y: v - tick };
     const b = horizontal ? { x: v + tick, y: fixed + tick } : { x: fixed + tick, y: v + tick };
-    prims.push({ t: 'line', layer: LAYER_DIM, a, b });
+    prims.push({ t: 'line', layer: LAYER_DIM_OFFSET, a, b });
   }
   // 区間が文字より狭いときは、製図の決まりどおり外側に出す（左端の区間は左へ、右端の区間は右へ）
   const charW = textH * k * 0.62;
@@ -47,7 +47,7 @@ export function dimChain(stops: number[], fixed: number, horizontal: boolean, k:
     }
     prims.push({
       t: 'text',
-      layer: LAYER_DIM,
+      layer: LAYER_DIM_OFFSET,
       p: horizontal ? { x: along, y: fixed + gap } : { x: fixed - gap, y: along },
       h: textH * k,
       s: label,

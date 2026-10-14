@@ -46,17 +46,29 @@
         <canvas id="canvas"></canvas>
       </main>
       <nav class="toolbar" aria-label="ツール">
-        <button id="btn-gridline" data-action="gridPanel">通り芯</button>
-        <button id="btn-column" data-action="column" data-mode="column" class="tool">柱</button>
-        <button id="btn-wall" data-action="wall" data-mode="wall" class="tool">壁</button>
-        <button id="btn-opening" data-action="opening" data-mode="opening" class="tool">開口</button>
-        <button id="btn-beam" data-action="beam" data-mode="beam" class="tool">梁</button>
-        <button id="btn-line" data-action="line" data-mode="line" class="tool active">線</button>
+        <div id="palette" class="palette" hidden role="menu" aria-label="道具">
+          <p class="palette-head">部材を置く</p>
+          <div class="palette-grid five">
+            <button id="btn-gridline" data-action="gridPanel" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v20M2 12h20" stroke-dasharray="5 2 1 2"/><circle cx="12" cy="3" r="0"/></svg>通り芯</button>
+            <button id="btn-column" data-action="column" data-mode="column" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12"/></svg>柱</button>
+            <button id="btn-wall" data-action="wall" data-mode="wall" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9h20M2 15h20"/></svg>壁</button>
+            <button id="btn-opening" data-action="opening" data-mode="opening" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9h7M15 9h7M2 15h7M15 15h7M9 9v6M15 9v6"/></svg>開口</button>
+            <button id="btn-beam" data-action="beam" data-mode="beam" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9h20M2 15h20" stroke-dasharray="3 2"/></svg>梁</button>
+          </div>
+          <p class="palette-head">作図・確認</p>
+          <div class="palette-grid">
+            <button id="btn-line" data-action="line" data-mode="line" class="tool active" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20L20 4"/><circle cx="4" cy="20" r="1.6" fill="currentColor"/><circle cx="20" cy="4" r="1.6" fill="currentColor"/></svg>線</button>
+            <button id="btn-offset" data-action="offset" data-mode="offset" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 17L17 3M7 21L21 7"/></svg>オフセット</button>
+            <button id="btn-measure" data-action="measure" data-mode="measure" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 12h18M3 8v8M21 8v8M7 10l-4 2 4 2M17 10l4 2-4 2"/></svg>測る</button>
+            <button id="btn-erase" data-action="erase" data-mode="erase" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>消す</button>
+          </div>
+        </div>
+        <button id="btn-tools" class="tools-button" aria-haspopup="true" aria-expanded="false" aria-controls="palette">
+          <span class="tools-label">道具</span><span id="tools-current" class="tools-current">線</span><span class="caret" aria-hidden="true"></span>
+        </button>
         <button id="btn-ortho" data-action="ortho" aria-pressed="false">直交</button>
-        <button id="btn-offset" data-action="offset" data-mode="offset" class="tool">オフセット</button>
-        <button id="btn-measure" data-action="measure" data-mode="measure" class="tool">測る</button>
-        <button id="btn-erase" data-action="erase" data-mode="erase" class="tool">消す</button>
-        <button id="btn-end" data-action="endChain">線を終了</button>
+        <button id="btn-end" data-action="endChain" hidden>やめる</button>
+        <span class="bar-spacer"></span>
         <button id="btn-undo" data-action="undo">戻す</button>
         <button id="btn-fit" data-action="fit">全体</button>
       </nav>

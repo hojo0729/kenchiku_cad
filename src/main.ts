@@ -1,4 +1,4 @@
-import { createDrawing, distance, LAYER_DIM, newId, normalizeDrawing, type Beam, type BeamType, type Drawing, type Vec2, type Wall, type WallType } from './model';
+import { createDrawing, distance, LAYER_DIM, LAYER_DIM_OFFSET, newId, normalizeDrawing, type Beam, type BeamType, type Drawing, type Vec2, type Wall, type WallType } from './model';
 import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Segment, type SnapResult } from './snap';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
@@ -142,6 +142,7 @@ function frame() {
       grid,
       centerPattern: centerPattern(drawing.scale),
       hiddenPattern: hiddenPattern(drawing.scale),
+      scale: drawing.scale,
       pending,
       cursor,
       underlay,
@@ -152,6 +153,7 @@ function frame() {
   );
   if (gesture === 'press' && pressAt && cursor) drawLoupe(ctx, canvas, view.toScreen(cursor.point), cssW, theme);
   updateStatus();
+  updateToolbar();
 }
 
 function resize() {
@@ -306,7 +308,7 @@ function snapRadiusPx(type: string) {
 function ownSegments(): Segment[] {
   const out: Segment[] = [];
   for (const p of decompose(drawing)) {
-    if (p.t === 'line' && p.layer !== LAYER_DIM) out.push({ a: p.a, b: p.b });
+    if (p.t === 'line' && p.layer !== LAYER_DIM && p.layer !== LAYER_DIM_OFFSET) out.push({ a: p.a, b: p.b });
   }
   return out;
 }
@@ -578,7 +580,7 @@ const actions: Record<string, () => void> = {
     setMode('erase');
   },
   endChain() {
-    if (mode === 'measure' || mode === 'erase' || mode === 'offset') {
+    if (mode !== 'line' && mode !== 'align') {
       setMode('line');
       return;
     }
@@ -698,6 +700,54 @@ function timestamp() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
+// ---------- 下のバー: 道具パレット ----------
+
+const toolsBtn = document.getElementById('btn-tools') as HTMLButtonElement;
+const paletteEl = document.getElementById('palette') as HTMLElement;
+const toolsCurrent = document.getElementById('tools-current') as HTMLElement;
+const orthoBtn = document.getElementById('btn-ortho') as HTMLButtonElement;
+const endBtn = document.getElementById('btn-end') as HTMLButtonElement;
+
+const MODE_LABEL: Record<Mode, string> = {
+  line: '線',
+  column: '柱',
+  wall: '壁',
+  beam: '梁',
+  opening: '開口',
+  align: '位置合わせ',
+  measure: '測る',
+  erase: '消す',
+  offset: 'オフセット',
+};
+
+function setPalette(open: boolean) {
+  paletteEl.hidden = !open;
+  toolsBtn.setAttribute('aria-expanded', String(open));
+}
+
+toolsBtn.addEventListener('click', () => {
+  const open = paletteEl.hidden;
+  if (open) {
+    showSheet(null);
+    setMenu(false);
+  }
+  setPalette(open);
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if (paletteEl.hidden) return;
+  const t = e.target as Node;
+  if (!paletteEl.contains(t) && !toolsBtn.contains(t)) setPalette(false);
+});
+
+/** 下のバーを今の状態に合わせる（道具の名前、直交は線のときだけ、「やめる」は操作中だけ） */
+function updateToolbar() {
+  toolsCurrent.textContent = MODE_LABEL[mode];
+  orthoBtn.hidden = mode !== 'line';
+  endBtn.hidden = !(pending || mode !== 'line');
+  endBtn.textContent = mode === 'line' ? '線を終える' : 'やめる';
+}
+
 // ---------- 左上のメニュー ----------
 
 const menuBtn = document.getElementById('btn-menu') as HTMLButtonElement;
@@ -719,6 +769,7 @@ offsetDimsCheck.addEventListener('change', () => {
 
 menuBtn.addEventListener('click', () => {
   const open = menuEl.hidden;
+  if (open) setPalette(false);
   offsetDimsCheck.checked = drawing.showOffsetDims;
   if (open) showSheet(null);
   setMenu(open);
@@ -737,6 +788,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
     actions[action]?.();
     // 全消去の1回目（確認待ち）はメニューを開いたままにする
     if (menuEl.contains(btn) && !(action === 'clear' && clearArmed)) setMenu(false);
+    if (paletteEl.contains(btn)) setPalette(false);
   });
 });
 
@@ -753,6 +805,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape' && !menuEl.hidden) {
     setMenu(false);
+    return;
+  }
+  if (e.key === 'Escape' && !paletteEl.hidden) {
+    setPalette(false);
     return;
   }
   if (e.key === 'Escape' && document.querySelector('.sheet:not([hidden])')) {
@@ -1368,7 +1424,7 @@ document.getElementById('off-close')!.addEventListener('click', () => showSheet(
 /** オフセットの元にできる線: 自分の線・通り芯・柱の辺・下敷きの線（寸法線は除く） */
 function offsetSources(): Segment[] {
   const segs: Segment[] = [];
-  for (const p of decompose(drawing)) if (p.t === 'line' && p.layer !== LAYER_DIM) segs.push({ a: p.a, b: p.b });
+  for (const p of decompose(drawing)) if (p.t === 'line' && p.layer !== LAYER_DIM && p.layer !== LAYER_DIM_OFFSET) segs.push({ a: p.a, b: p.b });
   if (underlay?.visible) for (const s of underlaySegments(underlay)) segs.push(s);
   return segs;
 }

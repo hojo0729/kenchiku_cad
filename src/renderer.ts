@@ -1,5 +1,5 @@
 import type { Vec2 } from './model';
-import { LAYER_COLUMN, LAYER_DIM, LAYER_GRID, LAYER_WALL } from './model';
+import { LAYER_COLUMN, LAYER_DIM, LAYER_DIM_OFFSET, LAYER_GRID, LAYER_WALL } from './model';
 import type { Prim } from './arch/primitives';
 import { formatDim } from './arch/grid';
 import type { SnapResult } from './snap';
@@ -46,6 +46,8 @@ export type RenderState = {
   centerPattern: number[];
   /** 破線（梁）のパターン（実寸mm） */
   hiddenPattern: number[];
+  /** 縮尺の分母（寄り寸法を描くかの判断に使う） */
+  scale: number;
   /** 作図中の始点 */
   pending: Vec2 | null;
   /** カーソル位置（スナップ済み） */
@@ -65,10 +67,14 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
   drawSnapGrid(ctx, w, h, view, st.grid, theme);
   if (st.underlay) renderUnderlay(ctx, w, h, st.underlay, view, theme.underlay, theme.font);
 
-  const colorOf = (layer: string) => (layer === LAYER_GRID ? theme.gridLine : layer === LAYER_DIM ? theme.dim : theme.ink);
+  const colorOf = (layer: string) =>
+    layer === LAYER_GRID ? theme.gridLine : layer === LAYER_DIM || layer === LAYER_DIM_OFFSET ? theme.dim : theme.ink;
+  // 寄り寸法は、文字が実寸で 5px 未満になるほど縮小しているときは描かない（建物全体を見ると数字が重なって読めないため）
+  const showOffsetDims = 2 * st.scale * view.scale >= 5;
 
   ctx.lineCap = 'round';
   for (const p of st.prims) {
+    if (p.layer === LAYER_DIM_OFFSET && !showOffsetDims) continue;
     if (p.t === 'line') {
       const a = view.toScreen(p.a);
       const b = view.toScreen(p.b);

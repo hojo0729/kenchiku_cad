@@ -146,6 +146,8 @@ export type Drawing = {
 
 export const LAYER_GRID = 'GRID';
 export const LAYER_DIM = 'DIM';
+/** 寄り寸法（柱・壁の通り芯から各面まで）。縮小表示では描かない */
+export const LAYER_DIM_OFFSET = 'DIM_OFFSET';
 export const LAYER_COLUMN = 'COLUMN';
 export const LAYER_WALL = 'WALL';
 export const LAYER_BEAM = 'BEAM';
@@ -171,6 +173,7 @@ export function defaultLayers(): Layer[] {
     { name: '0', color: 7 },
     { name: LAYER_GRID, color: 1, linetype: 'CENTER' },
     { name: LAYER_DIM, color: 3 },
+    { name: LAYER_DIM_OFFSET, color: 3 },
     { name: LAYER_COLUMN, color: 4 },
     { name: LAYER_WALL, color: 5 },
     { name: LAYER_BEAM, color: 6, linetype: 'HIDDEN' },
