@@ -49,7 +49,7 @@
 ## 技術構成
 
 - Vite + TypeScript（strict）、Canvas 2D、テストは Vitest
-- 保存: 今は localStorage に自動保存（`kenchiku-cad:drawing`）。将来 IndexedDB ＋ファイル書き出し。
+- 保存: 端末の IndexedDB（Dexie。DB 名 `kenchiku-cad`、`src/store.ts`）に自動保存。図面・下敷き（kv）、バックアップ（backups）。前の版の localStorage のデータは初回起動で移す。ファイル書き出しは DXF。
 - iPad Safari はファイルの上書き保存ができないため、保存はダウンロード形式を基本にする。
 
 ## スマホ用の公開ページ（claude.ai Artifact）
@@ -174,6 +174,7 @@ npm run build:artifact  # 公開ページ用の1ファイル（artifact/index.ht
 - [x] なぞり線（道具「なぞり線」）: 指（マウス）でなぞった軌跡を、間引き（Ramer–Douglas–Peucker、画面約3px）して線分の列にする。2本指はパン・ズームのまま。`src/freehand.ts`
   - 制約: なぞり線は吸着しない（寸法を正確にする線は直線ツールで）
 - [x] ドラッグで線（道具「線」の「ドラッグで線」）: オンの間は、指を置いた点（吸着つき）から離した点までを1本の線にする。動かさなければ普通のタップ。長押しの精密モードと併用可。
+- [x] 保存を IndexedDB へ（`src/store.ts`、Dexie）: 容量の上限が大きくなった。起動時に読み終えてから編集を受け付ける（`booted`）。localStorage からの移行あり。
 - [ ] Phase 4: 寸法線ツール（任意の2点、寄り寸法）、文字（DXFの Shift_JIS 対応含む）、画層管理（レイヤーパネル済み）、用紙枠（PDF 出力で済み）
 - [ ] Phase 5: JWW 書き出し（Jw_cad で開いて確認）
 - [ ] Phase 6: DWG（ODA File Converter 手順の整備）
@@ -198,6 +199,7 @@ npm run build:artifact  # 公開ページ用の1ファイル（artifact/index.ht
 
 ## メモ・決定事項
 
+- 2026-10-15: 「お願いします」（IndexedDB 化）→ 図面・下敷き・バックアップを IndexedDB に移した。社外には出さない（端末内のみ）。
 - 2026-10-15: 「直線の長押しモードとなぞり線」→ 線の「長押しで置く」と、道具「なぞり線」を追加。なぞりは間引いて線分にする（DXF は線のまま）。
 - 2026-10-14: プロジェクト開始。Web（Vite+TS+Canvas）で PC＋タブレット対応に決定。DWG は ODA File Converter 経由。
 - 2026-10-14: 最小構成のDXF（HEADERに$ACADVERのみ）は Jw_cad で「図形がありません」になった。

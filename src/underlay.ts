@@ -4,6 +4,7 @@ import type { Vec2 } from './model';
 import type { Curve, Segment, SnapCandidate } from './snap';
 import { primCurves } from './measure';
 import type { Viewport } from './viewport';
+import { getValue, putValue } from './store';
 
 /**
  * 下敷き（設計から来た図面）。線の集まりとして薄く表示し、スナップに使う。
@@ -45,24 +46,19 @@ export function underlayLayers(u: Underlay): { name: string; count: number }[] {
   return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-const KEY = 'kenchiku-cad:underlay';
-
-export function loadUnderlay(): Underlay | null {
+export async function loadUnderlay(): Promise<Underlay | null> {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const u = JSON.parse(raw) as Underlay;
-    return Array.isArray(u?.prims) ? u : null;
+    const u = await getValue<Underlay>('underlay');
+    return u && Array.isArray(u.prims) ? u : null;
   } catch {
     return null;
   }
 }
 
-/** 保存できたら true（大きすぎる図面は保存できないことがある） */
-export function saveUnderlay(u: Underlay | null): boolean {
+/** 保存できたら true（端末の空き容量が足りないときは false） */
+export async function saveUnderlay(u: Underlay | null): Promise<boolean> {
   try {
-    if (u) localStorage.setItem(KEY, JSON.stringify(u));
-    else localStorage.removeItem(KEY);
+    await putValue('underlay', u ? structuredClone(u) : null);
     return true;
   } catch {
     return false;

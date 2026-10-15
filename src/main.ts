@@ -18,10 +18,9 @@ import { loadUnderlay, saveUnderlay, underlayLayers, underlayCurves, underlayExt
 import { drawLoupe, readTheme, render, type Theme } from './renderer';
 import { toDxfBytes } from './export/dxf';
 import { zipStore } from './export/zip';
+import { addBackupRow, getValue, listBackups, openStore, putValue } from './store';
 import { buildPdf } from './export/pdf';
 import { PAPERS, drawSheet, sheetLayout, toGray, type PaperSize } from './export/sheet';
-
-const STORAGE_KEY = 'kenchiku-cad:drawing';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -32,7 +31,9 @@ const view = new Viewport();
 let isSample = false;
 let flashMsg = '';
 let flashTimer = 0;
-let drawing: Drawing = loadDrawing();
+let drawing: Drawing = sampleDrawing();
+/** 保存済みの図面を読み終えたか（読む前に描いたもので上書きしないため） */
+let booted = false;
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
@@ -54,7 +55,7 @@ let measurePts: Vec2[] = [];
 let measureCurve: Curve | null = null;
 /** オフセットの距離(mm) */
 let offsetDist = 150;
-let underlay: Underlay | null = loadUnderlay();
+let underlay: Underlay | null = null;
 /** 位置合わせで選んだ下敷き側の点 */
 let alignFrom: Vec2 | null = null;
 let currentTypeId = drawing.columnTypes[0].id;
@@ -66,17 +67,27 @@ let needsRender = true;
 
 // ---------- 保存・読み込み ----------
 
-function loadDrawing(): Drawing {
+/** 起動時に、保存済みの図面・下敷きを端末の保存領域から読む */
+async function boot() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw) as Drawing;
-      if (d && d.version === 1 && Array.isArray(d.entities)) return normalizeDrawing(d);
+    await openStore();
+    const stored = await getValue<Drawing>('drawing');
+    if (stored && stored.version === 1 && Array.isArray(stored.entities)) {
+      drawing = normalizeDrawing(stored);
+      isSample = false;
+      currentTypeId = drawing.columnTypes[0].id;
     }
+    underlay = await loadUnderlay();
+    lastBackupAt = (await listBackups()).at(-1)?.at ?? 0;
   } catch {
-    /* 読めなければ新規 */
+    flash('端末の保存領域を開けません。図面は保存されないので、DXFで保存してください');
+    saveWarn = '自動保存できていません。DXFで保存してください';
   }
-  return sampleDrawing();
+  booted = true;
+  if (cssW > 0) fitView();
+  syncUnderlayForm();
+  renderLayerPanel();
+  requestRender();
 }
 
 /** 初回はサンプル（RC造の通り芯 3×2スパン）を表示して、何ができるか分かるようにする */
@@ -129,7 +140,6 @@ try {
 
 // ---------- 保存の信頼性（バックアップ・保存失敗・DXF未保存） ----------
 
-const BACKUP_KEY = 'kenchiku-cad:backups';
 const DXF_DIRTY_KEY = 'kenchiku-cad:dxf-dirty';
 /** 定期バックアップの間隔 */
 const BACKUP_EVERY_MS = 10 * 60 * 1000;
@@ -138,35 +148,20 @@ const BACKUP_KEEP = 8;
 
 type Backup = { at: number; data: Drawing };
 
-function readBackups(): Backup[] {
-  try {
-    const arr = JSON.parse(localStorage.getItem(BACKUP_KEY) ?? '[]') as unknown;
-    return Array.isArray(arr) ? (arr as Backup[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-let lastBackupAt = readBackups().at(-1)?.at ?? 0;
+let lastBackupAt = 0;
 
 /**
  * 図面のバックアップを残す。force でないときは BACKUP_EVERY_MS ごと。
- * 保存できないとき（容量不足）は古いものから減らして入れ直す。
+ * 容量が足りないときは古いものから減らして入れ直す（addBackupRow）。
  */
 function addBackup(d: Drawing, force = false) {
+  if (!booted) return;
   const now = Date.now();
   if (!force && now - lastBackupAt < BACKUP_EVERY_MS) return;
   lastBackupAt = now;
-  let list = [...readBackups(), { at: now, data: structuredClone(d) }].slice(-BACKUP_KEEP);
-  for (;;) {
-    try {
-      localStorage.setItem(BACKUP_KEY, JSON.stringify(list));
-      return;
-    } catch {
-      if (list.length <= 1) return;
-      list = list.slice(1);
-    }
-  }
+  addBackupRow({ at: now, data: structuredClone(d) }, BACKUP_KEEP).catch(() => {
+    /* バックアップできなくても図面の保存は続ける */
+  });
 }
 
 /** 最後に DXF で保存してから変更があったか（ブラウザを開き直しても残す） */
@@ -192,16 +187,19 @@ function setDxfDirty(v: boolean) {
 let saveWarn = '';
 
 function saveDrawing() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(drawing));
-    if (saveWarn) {
-      saveWarn = '';
-      flash('自動保存できるようになりました');
-    }
-  } catch {
-    if (!saveWarn) flash('自動保存できません（ブラウザの容量が足りない可能性）。DXFで保存してください');
-    saveWarn = '自動保存できていません。DXFで保存してください';
-  }
+  if (!booted) return;
+  putValue('drawing', structuredClone(drawing)).then(
+    () => {
+      if (saveWarn) {
+        saveWarn = '';
+        flash('自動保存できるようになりました');
+      }
+    },
+    () => {
+      if (!saveWarn) flash('自動保存できません（端末の容量が足りない可能性）。DXFで保存してください');
+      saveWarn = '自動保存できていません。DXFで保存してください';
+    },
+  );
   addBackup(drawing);
 }
 
@@ -500,6 +498,7 @@ function startPress(ptr: Ptr) {
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   const p = localPos(e);
+  if (!booted) return;
   const ptr = { x: p.x, y: p.y, sx: p.x, sy: p.y, type: e.pointerType };
   pointers.set(e.pointerId, ptr);
 
@@ -1758,7 +1757,7 @@ ulFile.addEventListener('change', async () => {
     const dx = own ? (own.min.x + own.max.x) / 2 - (ext.min.x + ext.max.x) / 2 : -ext.min.x;
     const dy = own ? (own.min.y + own.max.y) / 2 - (ext.min.y + ext.max.y) / 2 : -ext.min.y;
     underlay = { name: file.name, prims: result.prims, dx, dy, visible: true, opacity: 0.6 };
-    const saved = saveUnderlay(underlay);
+    const saved = await saveUnderlay(underlay);
     syncUnderlayForm();
 
     const notes: string[] = [...result.warnings];
@@ -3050,9 +3049,9 @@ function backupSummary(d: Drawing): string {
   return `通り芯${d.grid ? 'あり' : 'なし'}・柱${d.columns.length}・壁${d.walls.length}・梁${d.beams.length}・寸法${d.dims.length}・文字${d.notes.length}`;
 }
 
-function openBackupSheet() {
+async function openBackupSheet() {
   backupList.replaceChildren();
-  const list = readBackups().slice().reverse();
+  const list = (await listBackups()).slice().reverse();
   if (list.length === 0) {
     const p = document.createElement('p');
     p.className = 'hint';
@@ -3219,6 +3218,7 @@ if (import.meta.env.DEV) {
 }
 
 new ResizeObserver(resize).observe(canvas);
+void boot();
 
 // オフライン用の Service Worker（対応していない環境では何もしない）
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
