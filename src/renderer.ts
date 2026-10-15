@@ -58,6 +58,8 @@ export type RenderState = {
   underlay: Underlay | null;
   /** 位置合わせで選んだ下敷き側の点 */
   alignFrom: Vec2 | null;
+  /** なぞり線の途中（ワールド座標） */
+  freeStroke: Vec2[] | null;
   /** 測る（pts は確定した点＋カーソル位置。fixed は確定した点の数） */
   measure: { kind: MeasureKind; pts: Vec2[]; fixed: number; curve: Curve | null } | null;
 };
@@ -140,6 +142,23 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     ctx.beginPath();
     ctx.arc(a.x, a.y, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // なぞり線の途中
+  if (st.freeStroke && st.freeStroke.length > 1) {
+    ctx.save();
+    ctx.strokeStyle = theme.preview;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    st.freeStroke.forEach((w, k) => {
+      const s = view.toScreen(w);
+      if (k === 0) ctx.moveTo(s.x, s.y);
+      else ctx.lineTo(s.x, s.y);
+    });
+    ctx.stroke();
+    ctx.restore();
   }
 
   // 測る

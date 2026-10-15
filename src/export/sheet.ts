@@ -145,6 +145,7 @@ export function drawSheet(ctx: CanvasRenderingContext2D, layout: SheetLayout, pr
       cursor: null,
       underlay: null,
       alignFrom: null,
+      freeStroke: null,
       measure: null,
     },
     PRINT_THEME,

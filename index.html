@@ -99,6 +99,7 @@
           <p class="palette-head">作図・確認</p>
           <div class="palette-grid">
             <button id="btn-line" data-action="line" data-mode="line" class="tool active" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20L20 4"/><circle cx="4" cy="20" r="1.6" fill="currentColor"/><circle cx="20" cy="4" r="1.6" fill="currentColor"/></svg>線</button>
+            <button id="btn-free" data-action="free" data-mode="free" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17c3-6 5 4 8-2s4-6 10-8"/></svg>なぞり線</button>
             <button id="btn-offset" data-action="offset" data-mode="offset" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 17L17 3M7 21L21 7"/></svg>オフセット</button>
             <button id="btn-measure" data-action="measure" data-mode="measure" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 12h18M3 8v8M21 8v8M7 10l-4 2 4 2M17 10l4 2-4 2"/></svg>測る</button>
             <button id="btn-edit" data-action="edit" data-mode="edit" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 7l3 3"/></svg>編集</button>
@@ -117,6 +118,7 @@
           <span class="tools-label">道具</span><span id="tools-current" class="tools-current">線</span><span class="caret" aria-hidden="true"></span>
         </button>
         <button id="btn-ortho" data-action="ortho" aria-pressed="false">直交</button>
+        <button id="btn-linepress" data-action="linePress" aria-pressed="false">長押しで置く</button>
         <button id="btn-end" data-action="endChain" hidden>やめる</button>
         <span class="bar-spacer"></span>
         <button id="btn-undo" data-action="undo">戻す</button>

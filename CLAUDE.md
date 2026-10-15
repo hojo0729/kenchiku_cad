@@ -170,6 +170,9 @@ npm run build:artifact  # 公開ページ用の1ファイル（artifact/index.ht
   - 制約: 寸法は手入力の値だけを見る（自動の値は常に一致するため）。通り芯の総寸法は通り芯から作るので対象外
   - 制約: 写真は図面データの一部なので、枚数が多いと localStorage（約5MB）とDXFが重くなる。目安は数十枚まで。写真の原本は保存しない
 - [x] メモ（道具「注記」の「メモ」）: 文字と同じ書き方で、青い文字を別の配列 `drawing.memos`・画層 `MEMO` に置く。レイヤーの一覧で隠せる（隠すと描かない・DXF には出る）。文字と違って図面の注記から分けて使う（次回の確認事項など）。`src/arch/annot.ts` の `memoAt`
+- [x] 線の精密モード（道具「線」の「長押しで置く」）: オンの間は指のタップでは点を置かず、長押し（ルーペ・吸着）で離したときだけ置く。マウスのクリックは従来どおり。
+- [x] なぞり線（道具「なぞり線」）: 指（マウス）でなぞった軌跡を、間引き（Ramer–Douglas–Peucker、画面約3px）して線分の列にする。2本指はパン・ズームのまま。`src/freehand.ts`
+  - 制約: なぞり線は吸着しない（寸法を正確にする線は直線ツールで）
 - [ ] Phase 4: 寸法線ツール（任意の2点、寄り寸法）、文字（DXFの Shift_JIS 対応含む）、画層管理（レイヤーパネル済み）、用紙枠（PDF 出力で済み）
 - [ ] Phase 5: JWW 書き出し（Jw_cad で開いて確認）
 - [ ] Phase 6: DWG（ODA File Converter 手順の整備）
@@ -194,6 +197,7 @@ npm run build:artifact  # 公開ページ用の1ファイル（artifact/index.ht
 
 ## メモ・決定事項
 
+- 2026-10-15: 「直線の長押しモードとなぞり線」→ 線の「長押しで置く」と、道具「なぞり線」を追加。なぞりは間引いて線分にする（DXF は線のまま）。
 - 2026-10-14: プロジェクト開始。Web（Vite+TS+Canvas）で PC＋タブレット対応に決定。DWG は ODA File Converter 経由。
 - 2026-10-14: 最小構成のDXF（HEADERに$ACADVERのみ）は Jw_cad で「図形がありません」になった。
   AutoCAD R12 風に修正（コード右寄せ3桁、$EXTMIN/$EXTMAX等、VPORT/STYLE/VIEW/UCS、空BLOCKS、R12にない$MEASUREMENTを削除）→ Jw_cad で読めた。

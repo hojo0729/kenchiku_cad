@@ -11,6 +11,7 @@ import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumn
 import { detectGrid, toSpans } from './arch/grid-detect';
 import { beamRect, gridSpans, nextBeamMark, nextWallMark, openingRange, spanName, wallName, wallRect, wallsInRange, type Rect } from './arch/wall';
 import { nearestSegment, offsetSegment, orthoConstrain } from './tools';
+import { strokeToSegments } from './freehand';
 import { decodeDxf, readDxf } from './import/dxf-read';
 import { drawingFromJson, extractEmbedded, isZip, unzipFirst } from './export/native';
 import { loadUnderlay, saveUnderlay, underlayLayers, underlayCurves, underlayExtents, underlaySegments, underlaySnapCandidates, type Underlay } from './underlay';
@@ -35,10 +36,14 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit' | 'pin' | 'memo';
+type Mode = 'line' | 'free' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit' | 'pin' | 'memo';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
+/** 線の道具で、点は長押しでだけ置く（精密モード） */
+let linePress = false;
+/** なぞり線: 指の軌跡（ワールド座標）。離すと線分にする */
+let freeStroke: Vec2[] | null = null;
 /** 測る: 測り方、置いた点、選んだ円・円弧 */
 let measureKind: MeasureKind = 'dist';
 let measurePts: Vec2[] = [];
@@ -233,6 +238,7 @@ function frame() {
       cursor,
       underlay,
       alignFrom,
+      freeStroke,
       measure: mode === 'measure' ? measureView() : mode === 'dim' ? dimView() : null,
     },
     theme,
@@ -310,6 +316,10 @@ function updateStatusText() {
   }
   if (mode === 'measure') {
     statusEl.textContent = measureStatus();
+    return;
+  }
+  if (mode === 'free') {
+    statusEl.textContent = 'なぞり線: 指（マウス）でなぞると線になります（2本指でパン・ズーム）';
     return;
   }
   if (mode === 'erase') {
@@ -396,7 +406,7 @@ function fmt(v: number) {
 type Ptr = { x: number; y: number; sx: number; sy: number; type: string };
 const pointers = new Map<number, Ptr>();
 /** press = 長押し中（カーソルを指の上に出して吸着先を選ぶ） */
-let gesture: 'none' | 'pan' | 'pinch' | 'press' = 'none';
+let gesture: 'none' | 'pan' | 'pinch' | 'press' | 'draw' = 'none';
 let tapCandidate = false;
 let pinchDist = 0;
 let pinchMid: Vec2 = { x: 0, y: 0 };
@@ -492,6 +502,14 @@ canvas.addEventListener('pointerdown', (e) => {
       gesture = 'pan';
       tapCandidate = false;
     }
+    // なぞり線: 軌跡を取る（長押しの吸着はしない）
+    if (mode === 'free' && e.button === 0) {
+      gesture = 'draw';
+      tapCandidate = false;
+      freeStroke = [view.toWorld(p)];
+      requestRender();
+      return;
+    }
     // 指・ペンは長押しで吸着モード
     if (e.pointerType !== 'mouse' && e.button === 0) {
       cancelPress();
@@ -503,6 +521,7 @@ canvas.addEventListener('pointerdown', (e) => {
   } else if (pointers.size === 2) {
     cancelPress();
     gesture = 'pinch';
+    freeStroke = null;
     pressAt = null;
     tapCandidate = false;
     const [a, b] = twoPointers();
@@ -538,6 +557,17 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
 
+  if (gesture === 'draw') {
+    if (freeStroke && pointers.size === 1) {
+      const w = view.toWorld(p);
+      const last = freeStroke[freeStroke.length - 1];
+      // 画面で約1.5px以上動いたら点を足す（細かすぎる点は間引きの前に減らす）
+      if (distance(last, w) * view.scale >= 1.5) freeStroke.push(w);
+      requestRender();
+    }
+    return;
+  }
+
   if (gesture === 'press') {
     // 長押し中は画面を動かさず、カーソルだけ指に合わせて動かす
     pressAt = { x: p.x, y: p.y - PRESS_OFFSET };
@@ -564,6 +594,16 @@ function endPointer(e: PointerEvent, allowTap: boolean) {
   const ptr = pointers.get(e.pointerId);
   if (!ptr) return;
   cancelPress();
+  if (gesture === 'draw') {
+    const stroke = freeStroke;
+    freeStroke = null;
+    if (allowTap) finishStroke(stroke);
+    pointers.delete(e.pointerId);
+    gesture = 'none';
+    cursor = null;
+    requestRender();
+    return;
+  }
   if (gesture === 'press' && pressAt) {
     // 長押しを離したところで確定（ルーペで見ていた吸着先）
     const at = pressAt;
@@ -609,7 +649,29 @@ canvas.addEventListener(
   { passive: false },
 );
 
+/** なぞり線の確定: 軌跡を間引いて線分にする（画面で約3pxの誤差まで） */
+function finishStroke(stroke: Vec2[] | null) {
+  if (!stroke || stroke.length < 2) {
+    flash('なぞりが短すぎます');
+    return;
+  }
+  const segs = strokeToSegments(stroke, 3 / view.scale, 1);
+  if (segs.length === 0) {
+    flash('なぞりが短すぎます');
+    return;
+  }
+  commit(() => {
+    for (const s of segs) drawing.entities.push({ id: newId(), kind: 'line', layer: '0', a: s.a, b: s.b });
+  });
+  flash(`なぞり線: ${segs.length}本の線にしました`);
+}
+
 function handleTap(screen: Vec2, type: string) {
+  // 精密モード: 指のタップでは置かず、長押しでだけ置く（マウスのクリックは従来どおり）
+  if (mode === 'line' && linePress && type !== 'press' && type !== 'mouse') {
+    flash('長押しで点を置きます（指を置いたまま、ルーペで合わせて離す）');
+    return;
+  }
   if (mode === 'measure') {
     measureTap(screen, type);
     return;
@@ -678,6 +740,14 @@ function handleTap(screen: Vec2, type: string) {
 const actions: Record<string, () => void> = {
   line() {
     setMode('line');
+  },
+  free() {
+    setMode('free');
+  },
+  linePress() {
+    linePress = !linePress;
+    document.getElementById('btn-linepress')!.setAttribute('aria-pressed', String(linePress));
+    flash(linePress ? '長押しモード: 点は長押しで置きます' : '長押しモードを切りました');
   },
   dim() {
     setMode('dim');
@@ -1040,11 +1110,13 @@ const toolsBtn = document.getElementById('btn-tools') as HTMLButtonElement;
 const paletteEl = document.getElementById('palette') as HTMLElement;
 const toolsCurrent = document.getElementById('tools-current') as HTMLElement;
 const orthoBtn = document.getElementById('btn-ortho') as HTMLButtonElement;
+const linePressBtn = document.getElementById('btn-linepress') as HTMLButtonElement;
 const endBtn = document.getElementById('btn-end') as HTMLButtonElement;
 
 const MODE_LABEL: Record<Mode, string> = {
   memo: 'メモ',
   line: '線',
+  free: 'なぞり線',
   column: '柱',
   wall: '壁',
   beam: '梁',
@@ -1086,6 +1158,7 @@ function updateToolbar() {
   measureBar.hidden = mode !== 'measure';
   (document.getElementById('measure-back') as HTMLButtonElement).hidden = !(measureKind === 'chain' || measureKind === 'area');
   orthoBtn.hidden = mode !== 'line';
+  linePressBtn.hidden = mode !== 'line';
   endBtn.hidden = !(pending || mode !== 'line');
   endBtn.textContent = mode === 'line' ? '線を終える' : 'やめる';
 }
@@ -1267,6 +1340,7 @@ function setMode(next: Mode) {
   flashMsg = ''; // 前の操作のメッセージで、次の操作の案内が隠れないように
   pending = null;
   alignFrom = null;
+  freeStroke = null;
   document.querySelectorAll<HTMLElement>('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === next));
   requestRender();
 }
