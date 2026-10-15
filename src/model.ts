@@ -175,6 +175,8 @@ export type Pin = {
   text: string;
   assignee: string;
   date: string;
+  /** 現場写真（JPEG の data URL、長辺 640px 程度に縮小したもの）。図面データと一緒に保存・DXFに埋め込む */
+  photo?: string;
 };
 
 export type Drawing = {

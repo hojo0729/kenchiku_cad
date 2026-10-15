@@ -288,6 +288,15 @@
           <label class="field inline" for="pin-date"><span>日付</span>
             <input id="pin-date" type="date" />
           </label>
+          <div class="pin-photo">
+            <img id="pin-photo-preview" alt="ピンの写真" hidden />
+            <div class="sheet-actions">
+              <label class="file-btn">写真を付ける
+                <input id="pin-photo-input" type="file" accept="image/*" />
+              </label>
+              <button type="button" id="pin-photo-remove" hidden>写真を外す</button>
+            </div>
+          </div>
           <p id="pin-msg" class="error" role="alert"></p>
           <div class="sheet-actions">
             <button type="submit" id="pin-ok" class="primary">この位置に置く</button>

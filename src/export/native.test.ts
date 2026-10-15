@@ -52,3 +52,14 @@ describe('DXF に部材データを埋め込む', () => {
     expect(extractEmbedded(decodeDxf(inner.data).text)?.walls.length).toBe(1);
   });
 });
+
+describe('ピンの写真', () => {
+  it('写真（data URL）は DXF の埋め込みデータを通って戻る', () => {
+    const d = createDrawing();
+    const photo = 'data:image/jpeg;base64,' + 'QUJD'.repeat(5000);
+    d.pins.push({ id: 'p1', no: 1, p: { x: 100, y: 200 }, kind: '指摘', status: '未対応', text: '確認', assignee: '', date: '2026-10-15', photo });
+    const dxf = toDxf(d, { embed: true });
+    const back = extractEmbedded(dxf);
+    expect(back?.pins[0].photo).toBe(photo);
+  });
+});

@@ -2626,6 +2626,60 @@ const pinFilter = document.getElementById('pin-filter') as HTMLSelectElement;
 let pinEditId: string | null = null;
 /** 新しく置く位置 */
 let pinAtPt: Vec2 | null = null;
+/** 編集中の写真（null=写真なし、undefined=変えていない、文字列=新しい写真） */
+let pinPhoto: string | null | undefined = undefined;
+const pinPhotoInput = document.getElementById('pin-photo-input') as HTMLInputElement;
+const pinPhotoPreview = document.getElementById('pin-photo-preview') as HTMLImageElement;
+const pinPhotoRemove = document.getElementById('pin-photo-remove') as HTMLButtonElement;
+
+/** 写真を長辺 640px・JPEG 品質 0.6 に縮小して data URL にする（容量を抑えるため） */
+async function shrinkPhoto(file: File): Promise<string> {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * k));
+  c.height = Math.max(1, Math.round(bmp.height * k));
+  const g = c.getContext('2d');
+  if (!g) throw new Error('canvas');
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return c.toDataURL('image/jpeg', 0.6);
+}
+
+function showPinPhoto() {
+  const src = typeof pinPhoto === 'string' ? pinPhoto : '';
+  const has = src !== '';
+  pinPhotoPreview.hidden = !has;
+  pinPhotoPreview.src = src;
+  pinPhotoRemove.hidden = !has;
+}
+
+pinPhotoInput.addEventListener('change', async () => {
+  const file = pinPhotoInput.files?.[0];
+  pinPhotoInput.value = '';
+  if (!file) return;
+  try {
+    pinPhoto = await shrinkPhoto(file);
+    showPinPhoto();
+    pinMsg.textContent = '';
+  } catch {
+    pinMsg.textContent = '写真を読めませんでした（別の画像で試してください）';
+  }
+});
+
+pinPhotoRemove.addEventListener('click', () => {
+  pinPhoto = null;
+  showPinPhoto();
+});
+
+/** 図面上のピンの位置を画面の中央へ移す */
+function centerOnPin(pin: Pin) {
+  const s = view.toScreen(pin.p);
+  view.panBy(cssW / 2 - s.x, cssH / 2 - s.y);
+  requestRender();
+}
 
 function todayText(): string {
   const d = new Date();
@@ -2660,6 +2714,8 @@ function openPinSheet(id: string | null, at: Vec2 | null) {
   pinText.value = pin?.text ?? '';
   pinAssignee.value = pin?.assignee ?? '';
   pinDate.value = pin?.date ?? todayText();
+  pinPhoto = pin ? (pin.photo ?? null) : null;
+  showPinPhoto();
   pinOk.textContent = pin ? '変更を保存' : 'この位置に置く';
   pinDelete.hidden = !pin;
   showSheet(pinSheet);
@@ -2679,18 +2735,25 @@ pinForm.addEventListener('submit', (e) => {
     assignee: pinAssignee.value.trim(),
     date: pinDate.value.trim() || todayText(),
   };
+  const photo = pinPhoto;
   if (pinEditId) {
     const id = pinEditId;
     commit(() => {
       const it = drawing.pins.find((x) => x.id === id);
-      if (it) Object.assign(it, data);
+      if (!it) return;
+      Object.assign(it, data);
+      if (photo === undefined) return; // 写真は変えていない
+      if (photo) it.photo = photo;
+      else delete it.photo;
     });
     flash('ピンを保存しました');
   } else if (pinAtPt) {
     const at = pinAtPt;
     const no = nextPinNo();
     commit(() => {
-      drawing.pins.push({ id: newId(), no, p: at, ...data });
+      const pin: Pin = { id: newId(), no, p: at, ...data };
+      if (photo) pin.photo = photo;
+      drawing.pins.push(pin);
     });
     flash(`ピン ${no} を置きました（内容はタップで編集）`);
   }
@@ -2733,18 +2796,31 @@ function renderPinList() {
     return;
   }
   for (const pin of rows) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'backup-row';
+    const row = document.createElement('div');
+    row.className = 'pin-row';
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'backup-row';
     const title = document.createElement('span');
     title.className = 'menu-title';
-    title.textContent = `${pin.no}. ${pin.kind}・${pin.status}${pin.assignee ? `・${pin.assignee}` : ''}`;
+    title.textContent = `${pin.no}. ${pin.kind}・${pin.status}${pin.assignee ? `・${pin.assignee}` : ''}${pin.photo ? '　📷' : ''}`;
     const sub = document.createElement('span');
     sub.className = 'menu-sub';
     sub.textContent = `${pin.date}　${pin.text.split('\n')[0]}`;
-    btn.append(title, sub);
-    btn.addEventListener('click', () => openPinSheet(pin.id, null));
-    pinList.append(btn);
+    go.append(title, sub);
+    go.title = 'この位置へ移動';
+    go.addEventListener('click', () => {
+      showSheet(null);
+      centerOnPin(pin);
+      flash(`ピン ${pin.no} へ移動しました`);
+    });
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'pin-edit-btn';
+    edit.textContent = '編集';
+    edit.addEventListener('click', () => openPinSheet(pin.id, null));
+    row.append(go, edit);
+    pinList.append(row);
   }
 }
 
