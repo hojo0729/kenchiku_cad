@@ -63,3 +63,15 @@ describe('ピンの写真', () => {
     expect(back?.pins[0].photo).toBe(photo);
   });
 });
+
+describe('ピンの色の DXF 出力', () => {
+  it('ピンの円と文字にエンティティの色（グループ 62）を書く', () => {
+    const d = createDrawing();
+    d.pins.push({ id: 'p1', no: 1, p: { x: 0, y: 0 }, kind: '指摘', status: '未対応', text: 'x', assignee: '', date: '2026-10-15', color: 'blue' });
+    const lines = toDxf(d).split(/\r?\n/).map((l) => l.trim());
+    const i = lines.indexOf('CIRCLE');
+    const j = lines.indexOf('62', i);
+    expect(j).toBeGreaterThan(i);
+    expect(lines[j + 1]).toBe('5');
+  });
+});

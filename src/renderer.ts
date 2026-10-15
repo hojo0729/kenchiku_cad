@@ -19,6 +19,8 @@ export type Theme = {
   snap: string;
   underlay: string;
   font: string;
+  /** 白黒で描く（印刷）。true のとき個別の色（ピン）も画層の色にする */
+  mono?: boolean;
 };
 
 export function readTheme(): Theme {
@@ -94,7 +96,7 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
     } else if (p.t === 'circle' || p.t === 'arc') {
       const c = view.toScreen(p.c);
       ctx.setLineDash([]);
-      ctx.strokeStyle = colorOf(p.layer);
+      ctx.strokeStyle = p.t === 'circle' && p.pen && !theme.mono ? p.pen.hex : colorOf(p.layer);
       ctx.lineWidth = 1;
       ctx.beginPath();
       if (p.t === 'circle') ctx.arc(c.x, c.y, p.r * view.scale, 0, Math.PI * 2);
@@ -111,7 +113,7 @@ export function render(ctx: CanvasRenderingContext2D, w: number, h: number, st: 
       ctx.save();
       ctx.translate(pt.x, pt.y);
       ctx.rotate((-p.rot * Math.PI) / 180);
-      ctx.fillStyle = colorOf(p.layer);
+      ctx.fillStyle = p.pen && !theme.mono ? p.pen.hex : colorOf(p.layer);
       ctx.font = `${px}px ${theme.font}`;
       ctx.textAlign = p.align;
       ctx.textBaseline = p.valign === 'middle' ? 'middle' : 'alphabetic';

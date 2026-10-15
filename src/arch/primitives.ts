@@ -9,14 +9,19 @@ import { decomposeAnnotations } from './annot';
  * 図面を構成する最小単位。画面描画と DXF/JWW 書き出しはこれだけを扱う。
  * 建築部材（通り芯・壁・建具…）は decompose() でここに分解される。
  */
+/** 個別の色: 画面用の色（hex）と DXF の色番号（aci） */
+export type Pen = { hex: string; aci: number };
+
 export type Prim =
   | { t: 'line'; layer: string; a: Vec2; b: Vec2; ltype?: 'CONTINUOUS' | 'CENTER' | 'HIDDEN' }
-  | { t: 'circle'; layer: string; c: Vec2; r: number }
+  | { t: 'circle'; layer: string; c: Vec2; r: number; pen?: Pen }
   /** 円弧。a0→a1 へ反時計回り（度） */
   | { t: 'arc'; layer: string; c: Vec2; r: number; a0: number; a1: number }
   | {
       t: 'text';
       layer: string;
+      /** 個別の色（省略時は画層の色）。印刷は白黒で描く */
+      pen?: Pen;
       /** 基準点 */
       p: Vec2;
       /** 文字高さ（実寸mm） */

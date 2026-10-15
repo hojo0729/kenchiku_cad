@@ -161,6 +161,22 @@ export const PIN_STATUSES = ['未対応', '対応中', '完了'] as const;
 export type PinStatus = (typeof PIN_STATUSES)[number];
 /** ピンの種類 */
 export const PIN_KINDS = ['指摘', '確認', '決定', 'その他'] as const;
+/** ピンの色。hex は画面、aci は DXF（AutoCAD 色番号）。印刷（PDF）は白黒 */
+export const PIN_COLORS = [
+  { key: 'red', label: '赤', hex: '#d32f2f', aci: 1 },
+  { key: 'blue', label: '青', hex: '#1565c0', aci: 5 },
+  { key: 'green', label: '緑', hex: '#2e7d32', aci: 3 },
+  { key: 'orange', label: '橙', hex: '#ef6c00', aci: 30 },
+  { key: 'purple', label: '紫', hex: '#7b1fa2', aci: 6 },
+] as const;
+export type PinColor = (typeof PIN_COLORS)[number]['key'];
+/** ピンの大きさ（用紙上の半径 mm。縮尺を掛けて実寸にする） */
+export const PIN_SIZES = {
+  S: { label: '小', r: 3 },
+  M: { label: '中', r: 4 },
+  L: { label: '大', r: 6 },
+} as const;
+export type PinSize = keyof typeof PIN_SIZES;
 
 /**
  * ピン（指摘・確認事項を図面の位置に付ける）。no は置いた順の番号（図面上の表示も一覧もこれで揃える）。
@@ -175,6 +191,10 @@ export type Pin = {
   text: string;
   assignee: string;
   date: string;
+  /** 色（省略時は赤） */
+  color?: PinColor;
+  /** 大きさ（省略時は中） */
+  size?: PinSize;
   /** 現場写真（JPEG の data URL、長辺 640px 程度に縮小したもの）。図面データと一緒に保存・DXFに埋め込む */
   photo?: string;
 };

@@ -1,5 +1,5 @@
 import type { Dim, Drawing, LevelMark, Note, Pin, Vec2 } from '../model';
-import { LAYER_DIM, LAYER_LEVEL, LAYER_NOTE, LAYER_PIN } from '../model';
+import { LAYER_DIM, LAYER_LEVEL, LAYER_NOTE, LAYER_PIN, PIN_COLORS, PIN_SIZES } from '../model';
 import { formatDim } from './grid';
 import type { Prim } from './primitives';
 
@@ -166,21 +166,26 @@ export function decomposeLevel(lv: LevelMark, scale: number): Prim[] {
 }
 
 /** ピン記号の半径（用紙上 mm）。全体表示でも見えるように大きめ */
-const PIN_R = 4;
+/** ピンの色と半径（用紙上 mm）。未設定は赤・中 */
+export function pinStyle(pin: Pin): { pen: { hex: string; aci: number }; r: number } {
+  const c = PIN_COLORS.find((x) => x.key === pin.color) ?? PIN_COLORS[0];
+  const r = PIN_SIZES[pin.size ?? 'M'].r;
+  return { pen: { hex: c.hex, aci: c.aci }, r };
+}
 
 /** ピン: 丸の中に番号。位置 p が丸の中心 */
 export function decomposePin(pin: Pin, scale: number): Prim[] {
-  const r = PIN_R * scale;
+  const { pen, r: pr } = pinStyle(pin);
+  const r = pr * scale;
   return [
-    { t: 'circle', layer: LAYER_PIN, c: pin.p, r },
-    { t: 'text', layer: LAYER_PIN, p: pin.p, h: r * 0.9, s: String(pin.no), align: 'center', valign: 'middle', rot: 0 },
+    { t: 'circle', layer: LAYER_PIN, c: pin.p, r, pen },
+    { t: 'text', layer: LAYER_PIN, p: pin.p, h: r * 0.9, s: String(pin.no), align: 'center', valign: 'middle', rot: 0, pen },
   ];
 }
 
 /** タップ位置にあるピン（丸の上、または r 以内） */
 export function pinAt(d: Drawing, w: Vec2, r: number): Pin | undefined {
-  const R = PIN_R * d.scale;
-  return d.pins.find((pin) => Math.hypot(w.x - pin.p.x, w.y - pin.p.y) <= R + r);
+  return d.pins.find((pin) => Math.hypot(w.x - pin.p.x, w.y - pin.p.y) <= pinStyle(pin).r * d.scale + r);
 }
 
 export function decomposeAnnotations(d: Drawing): Prim[] {

@@ -4,7 +4,7 @@ import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } 
 import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
 import { dimAt, dimLabel, levelAt, noteAt, pinAt } from './arch/annot';
-import { PIN_KINDS, PIN_STATUSES, type Pin } from './model';
+import { PIN_KINDS, PIN_STATUSES, type Pin, type PinColor, type PinSize } from './model';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
@@ -2614,6 +2614,8 @@ const pinForm = document.getElementById('pin-form') as HTMLFormElement;
 const pinKind = document.getElementById('pin-kind') as HTMLSelectElement;
 const pinStatus = document.getElementById('pin-status') as HTMLSelectElement;
 const pinText = document.getElementById('pin-text') as HTMLTextAreaElement;
+const pinColor = document.getElementById('pin-color') as HTMLSelectElement;
+const pinSize = document.getElementById('pin-size') as HTMLSelectElement;
 const pinAssignee = document.getElementById('pin-assignee') as HTMLInputElement;
 const pinDate = document.getElementById('pin-date') as HTMLInputElement;
 const pinMsg = document.getElementById('pin-msg') as HTMLElement;
@@ -2712,6 +2714,8 @@ function openPinSheet(id: string | null, at: Vec2 | null) {
   pinKind.value = pin?.kind ?? PIN_KINDS[0];
   pinStatus.value = pin?.status ?? PIN_STATUSES[0];
   pinText.value = pin?.text ?? '';
+  pinColor.value = pin?.color ?? 'red';
+  pinSize.value = pin?.size ?? 'M';
   pinAssignee.value = pin?.assignee ?? '';
   pinDate.value = pin?.date ?? todayText();
   pinPhoto = pin ? (pin.photo ?? null) : null;
@@ -2731,6 +2735,8 @@ pinForm.addEventListener('submit', (e) => {
   const data = {
     kind: pinKind.value,
     status: pinStatus.value as Pin['status'],
+    color: pinColor.value as PinColor,
+    size: pinSize.value as PinSize,
     text,
     assignee: pinAssignee.value.trim(),
     date: pinDate.value.trim() || todayText(),

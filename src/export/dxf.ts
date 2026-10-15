@@ -227,6 +227,7 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
       case 'circle':
         g(0, 'CIRCLE');
         g(8, p.layer);
+        if (p.pen) g(62, p.pen.aci);
         point(10, p.c);
         g(40, p.r);
         break;
@@ -241,6 +242,7 @@ export function toDxf(drawing: Drawing, options: DxfOptions = {}): string {
       case 'text': {
         g(0, 'TEXT');
         g(8, p.layer);
+        if (p.pen) g(62, p.pen.aci);
         point(10, p.p);
         g(40, p.h);
         g(1, p.s);

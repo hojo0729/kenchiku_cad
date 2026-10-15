@@ -36,6 +36,7 @@ export const PRINT_THEME: Theme = {
   snap: '#000000',
   underlay: '#000000',
   font: FONT,
+  mono: true,
 };
 
 export type Rect = { x: number; y: number; w: number; h: number };

@@ -90,3 +90,25 @@ describe('文字・レベル', () => {
     expect(distToSegment({ x: 13, y: 4 }, { x: 0, y: 0 }, { x: 10, y: 0 })).toBeCloseTo(5);
   });
 });
+
+describe('ピンの色と大きさ', () => {
+  const base = { id: 'q', no: 1, p: { x: 0, y: 0 }, kind: '指摘', status: '未対応' as const, text: 't', assignee: '', date: '2026-10-15' };
+  it('大きさ L は半径 6mm×縮尺、色は青の hex と ACI 5 になる', () => {
+    const prims = decomposePin({ ...base, color: 'blue', size: 'L' }, 50);
+    const c = prims.find((p) => p.t === 'circle');
+    expect(c && c.t === 'circle' && c.r).toBe(300);
+    expect(c && c.t === 'circle' && c.pen).toEqual({ hex: '#1565c0', aci: 5 });
+  });
+  it('未設定は赤・中（半径 200）', () => {
+    const c = decomposePin(base, 50).find((p) => p.t === 'circle');
+    expect(c && c.t === 'circle' && c.r).toBe(200);
+    expect(c && c.t === 'circle' && c.pen?.aci).toBe(1);
+  });
+  it('大きさに合わせてヒット判定の半径も変わる', () => {
+    const d = createDrawing();
+    d.scale = 50;
+    d.pins.push({ ...base, size: 'L' });
+    // 中心から 250mm 離れた点（L の半径 300mm 以内、M の 200mm の外）
+    expect(pinAt(d, { x: 250000 / 1000, y: 0 }, 0)).toBeDefined();
+  });
+});
