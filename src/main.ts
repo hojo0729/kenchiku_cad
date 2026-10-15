@@ -5,6 +5,7 @@ import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, po
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
 import { dimAt, dimLabel, levelAt, noteAt, pinAt } from './arch/annot';
 import { PIN_KINDS, PIN_STATUSES, type Pin, type PinColor, type PinSize } from './model';
+import { checkDrawing } from './arch/check';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
@@ -693,6 +694,10 @@ const actions: Record<string, () => void> = {
     setMenu(false);
     openPinList();
   },
+  dimCheck() {
+    setMenu(false);
+    openCheckSheet();
+  },
   note() {
     setMode('note');
   },
@@ -1243,7 +1248,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet, backupSheet, pinSheet, pinListSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet, backupSheet, pinSheet, pinListSheet, checkSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -2677,11 +2682,48 @@ pinPhotoRemove.addEventListener('click', () => {
 });
 
 /** 図面上のピンの位置を画面の中央へ移す */
-function centerOnPin(pin: Pin) {
-  const s = view.toScreen(pin.p);
+function centerOnPoint(p: Vec2) {
+  const s = view.toScreen(p);
   view.panBy(cssW / 2 - s.x, cssH / 2 - s.y);
   requestRender();
 }
+
+// ---------- 整合チェック ----------
+
+const checkSheet = document.getElementById('check-sheet') as HTMLElement;
+const checkList = document.getElementById('check-list') as HTMLElement;
+
+function openCheckSheet() {
+  checkList.replaceChildren();
+  const issues = checkDrawing(drawing);
+  if (issues.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = '問題は見つかりませんでした';
+    checkList.append(p);
+  }
+  const kindLabel = { dim: '寸法', column: '柱', opening: '開口' } as const;
+  for (const issue of issues) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'backup-row';
+    const title = document.createElement('span');
+    title.className = 'menu-title';
+    title.textContent = kindLabel[issue.kind];
+    const sub = document.createElement('span');
+    sub.className = 'menu-sub';
+    sub.textContent = issue.message;
+    btn.append(title, sub);
+    btn.addEventListener('click', () => {
+      showSheet(null);
+      centerOnPoint(issue.point);
+    });
+    checkList.append(btn);
+  }
+  showSheet(checkSheet);
+}
+
+document.getElementById('check-close')!.addEventListener('click', () => showSheet(null));
 
 function todayText(): string {
   const d = new Date();
@@ -2817,7 +2859,7 @@ function renderPinList() {
     go.title = 'この位置へ移動';
     go.addEventListener('click', () => {
       showSheet(null);
-      centerOnPin(pin);
+      centerOnPoint(pin.p);
       flash(`ピン ${pin.no} へ移動しました`);
     });
     const edit = document.createElement('button');

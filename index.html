@@ -61,6 +61,9 @@
           <button id="menu-pins" data-action="pinList" role="menuitem">
             <span class="menu-title">ピン一覧</span><span class="menu-sub">指摘・確認事項を一覧で見る・絞り込む・CSVで保存</span>
           </button>
+          <button id="menu-check" data-action="dimCheck" role="menuitem">
+            <span class="menu-title">整合チェック</span><span class="menu-sub">寸法の値・柱・開口のずれを一覧にして、その場所へ移動</span>
+          </button>
           <button id="btn-clear" data-action="clear" role="menuitem">
             <span class="menu-title">全消去</span><span class="menu-sub">自分で描いたものを全部消す（下敷きは残る）</span>
           </button>
@@ -320,6 +323,16 @@
             <button type="button" id="pin-close">閉じる</button>
           </div>
         </form>
+      </section>
+      <section id="check-sheet" class="sheet" hidden aria-label="整合チェック">
+        <div class="sheet-body">
+          <h2>整合チェック</h2>
+          <p class="hint">図形は変えていません。行をタップすると、その場所へ移動します。</p>
+          <div id="check-list"></div>
+          <div class="sheet-actions">
+            <button type="button" id="check-close">閉じる</button>
+          </div>
+        </div>
       </section>
       <section id="pin-list-sheet" class="sheet" hidden aria-label="ピン一覧">
         <div class="sheet-body">
