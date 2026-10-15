@@ -42,6 +42,10 @@ let mode: Mode = 'line';
 let ortho = false;
 /** 線の道具で、点は長押しでだけ置く（精密モード） */
 let linePress = false;
+/** 線の道具で、指を置いた点から離した点までドラッグして1本引く */
+let dragLine = false;
+/** ドラッグ線の開始前に残っていた作図中の始点（タップで戻すため） */
+let dragPrev: Vec2 | null = null;
 /** なぞり線: 指の軌跡（ワールド座標）。離すと線分にする */
 let freeStroke: Vec2[] | null = null;
 /** 測る: 測り方、置いた点、選んだ円・円弧 */
@@ -318,6 +322,10 @@ function updateStatusText() {
     statusEl.textContent = measureStatus();
     return;
   }
+  if (gesture === 'dragline' && pending && cursor) {
+    statusEl.textContent = `ドラッグ中: 長さ ${fmt(distance(pending, cursor.point))}`;
+    return;
+  }
   if (mode === 'free') {
     statusEl.textContent = 'なぞり線: 指（マウス）でなぞると線になります（2本指でパン・ズーム）';
     return;
@@ -406,7 +414,7 @@ function fmt(v: number) {
 type Ptr = { x: number; y: number; sx: number; sy: number; type: string };
 const pointers = new Map<number, Ptr>();
 /** press = 長押し中（カーソルを指の上に出して吸着先を選ぶ） */
-let gesture: 'none' | 'pan' | 'pinch' | 'press' | 'draw' = 'none';
+let gesture: 'none' | 'pan' | 'pinch' | 'press' | 'draw' | 'dragline' = 'none';
 let tapCandidate = false;
 let pinchDist = 0;
 let pinchMid: Vec2 = { x: 0, y: 0 };
@@ -502,6 +510,16 @@ canvas.addEventListener('pointerdown', (e) => {
       gesture = 'pan';
       tapCandidate = false;
     }
+    // ドラッグで線: 指を置いた点（吸着つき）を始点にする
+    if (mode === 'line' && dragLine && e.button === 0) {
+      gesture = 'dragline';
+      tapCandidate = false;
+      dragPrev = pending;
+      updateCursor(p, e.pointerType);
+      pending = cursor ? { ...cursor.point } : view.toWorld(p);
+      requestRender();
+      return;
+    }
     // なぞり線: 軌跡を取る（長押しの吸着はしない）
     if (mode === 'free' && e.button === 0) {
       gesture = 'draw';
@@ -520,6 +538,7 @@ canvas.addEventListener('pointerdown', (e) => {
     updateCursor(p, e.pointerType);
   } else if (pointers.size === 2) {
     cancelPress();
+    if (gesture === 'dragline') pending = dragPrev;
     gesture = 'pinch';
     freeStroke = null;
     pressAt = null;
@@ -554,6 +573,11 @@ canvas.addEventListener('pointermove', (e) => {
     pinchDist = dist;
     pinchMid = mid;
     requestRender();
+    return;
+  }
+
+  if (gesture === 'dragline') {
+    updateCursor(p, ptr.type);
     return;
   }
 
@@ -594,6 +618,29 @@ function endPointer(e: PointerEvent, allowTap: boolean) {
   const ptr = pointers.get(e.pointerId);
   if (!ptr) return;
   cancelPress();
+  if (gesture === 'dragline') {
+    const from = pending;
+    const moved = Math.hypot(ptr.x - ptr.sx, ptr.y - ptr.sy);
+    const threshold = ptr.type === 'touch' ? 10 : 5;
+    pending = dragPrev;
+    dragPrev = null;
+    pointers.delete(e.pointerId);
+    gesture = 'none';
+    if (allowTap && moved < threshold) {
+      // ほとんど動かさなかったら普通のタップ
+      handleTap({ x: ptr.sx, y: ptr.sy }, ptr.type);
+    } else if (allowTap && from && cursor) {
+      const to = { ...cursor.point };
+      if (distance(from, to) > 1e-6) {
+        commit(() => {
+          drawing.entities.push({ id: newId(), kind: 'line', layer: '0', a: from, b: to });
+        });
+      }
+      pending = null;
+    }
+    requestRender();
+    return;
+  }
   if (gesture === 'draw') {
     const stroke = freeStroke;
     freeStroke = null;
@@ -743,6 +790,11 @@ const actions: Record<string, () => void> = {
   },
   free() {
     setMode('free');
+  },
+  dragLine() {
+    dragLine = !dragLine;
+    document.getElementById('btn-dragline')!.setAttribute('aria-pressed', String(dragLine));
+    flash(dragLine ? 'ドラッグモード: 指を置いて離すまでで1本の線になります（動かさなければタップ）' : 'ドラッグモードを切りました');
   },
   linePress() {
     linePress = !linePress;
@@ -1111,6 +1163,7 @@ const paletteEl = document.getElementById('palette') as HTMLElement;
 const toolsCurrent = document.getElementById('tools-current') as HTMLElement;
 const orthoBtn = document.getElementById('btn-ortho') as HTMLButtonElement;
 const linePressBtn = document.getElementById('btn-linepress') as HTMLButtonElement;
+const dragLineBtn = document.getElementById('btn-dragline') as HTMLButtonElement;
 const endBtn = document.getElementById('btn-end') as HTMLButtonElement;
 
 const MODE_LABEL: Record<Mode, string> = {
@@ -1159,6 +1212,7 @@ function updateToolbar() {
   (document.getElementById('measure-back') as HTMLButtonElement).hidden = !(measureKind === 'chain' || measureKind === 'area');
   orthoBtn.hidden = mode !== 'line';
   linePressBtn.hidden = mode !== 'line';
+  dragLineBtn.hidden = mode !== 'line';
   endBtn.hidden = !(pending || mode !== 'line');
   endBtn.textContent = mode === 'line' ? '線を終える' : 'やめる';
 }
