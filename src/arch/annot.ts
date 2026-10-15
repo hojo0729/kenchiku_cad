@@ -1,5 +1,5 @@
-import type { Dim, Drawing, LevelMark, Note, Vec2 } from '../model';
-import { LAYER_DIM, LAYER_LEVEL, LAYER_NOTE } from '../model';
+import type { Dim, Drawing, LevelMark, Note, Pin, Vec2 } from '../model';
+import { LAYER_DIM, LAYER_LEVEL, LAYER_NOTE, LAYER_PIN } from '../model';
 import { formatDim } from './grid';
 import type { Prim } from './primitives';
 
@@ -165,11 +165,30 @@ export function decomposeLevel(lv: LevelMark, scale: number): Prim[] {
   ];
 }
 
+/** ピン記号の半径（用紙上 mm）。全体表示でも見えるように大きめ */
+const PIN_R = 4;
+
+/** ピン: 丸の中に番号。位置 p が丸の中心 */
+export function decomposePin(pin: Pin, scale: number): Prim[] {
+  const r = PIN_R * scale;
+  return [
+    { t: 'circle', layer: LAYER_PIN, c: pin.p, r },
+    { t: 'text', layer: LAYER_PIN, p: pin.p, h: r * 0.9, s: String(pin.no), align: 'center', valign: 'middle', rot: 0 },
+  ];
+}
+
+/** タップ位置にあるピン（丸の上、または r 以内） */
+export function pinAt(d: Drawing, w: Vec2, r: number): Pin | undefined {
+  const R = PIN_R * d.scale;
+  return d.pins.find((pin) => Math.hypot(w.x - pin.p.x, w.y - pin.p.y) <= R + r);
+}
+
 export function decomposeAnnotations(d: Drawing): Prim[] {
   const out: Prim[] = [];
   for (const dim of d.dims) out.push(...decomposeDim(dim, d.scale));
   for (const n of d.notes) out.push(...decomposeNote(n, d.scale));
   for (const lv of d.levels) out.push(...decomposeLevel(lv, d.scale));
+  for (const pin of d.pins) out.push(...decomposePin(pin, d.scale));
   return out;
 }
 

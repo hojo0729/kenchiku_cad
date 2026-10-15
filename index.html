@@ -58,6 +58,9 @@
           <button id="menu-backup" data-action="backups" role="menuitem">
             <span class="menu-title">バックアップから戻す</span><span class="menu-sub">10分ごと・全消去や開く前の状態を残しています</span>
           </button>
+          <button id="menu-pins" data-action="pinList" role="menuitem">
+            <span class="menu-title">ピン一覧</span><span class="menu-sub">指摘・確認事項を一覧で見る・絞り込む・CSVで保存</span>
+          </button>
           <button id="btn-clear" data-action="clear" role="menuitem">
             <span class="menu-title">全消去</span><span class="menu-sub">自分で描いたものを全部消す（下敷きは残る）</span>
           </button>
@@ -80,6 +83,7 @@
           <div class="palette-grid">
             <button id="btn-dim" data-action="dim" data-mode="dim" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 15h16M4 11v8M20 11v8M3 17l2-2M19 17l2-2"/></svg>寸法</button>
             <button id="btn-note" data-action="note" data-mode="note" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 20h16M7 16l5-12 5 12M9 12h6"/></svg>文字</button>
+            <button id="btn-pin" data-action="pin" data-mode="pin" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="10" r="5"/><path d="M12 15v6"/></svg>ピン</button>
             <button id="btn-level" data-action="level" data-mode="level" class="tool" role="menuitem"><svg class="pi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 14l-5 6M12 14l5 6M9 20h6"/><path d="M3 14h18"/></svg>レベル</button>
           </div>
 
@@ -255,6 +259,61 @@
             <button type="button" id="beam-close">閉じる</button>
           </div>
         </form>
+      </section>
+      <section id="pin-sheet" class="sheet" hidden aria-label="ピンの設定">
+        <form id="pin-form" class="sheet-body" novalidate>
+          <h2 id="pin-title">ピン</h2>
+          <p class="hint">図面の位置に付けて、指摘や確認事項を書きます。番号は置いた順です。</p>
+          <label class="field inline" for="pin-kind"><span>種類</span>
+            <select id="pin-kind">
+              <option value="指摘">指摘</option>
+              <option value="確認">確認</option>
+              <option value="決定">決定</option>
+              <option value="その他">その他</option>
+            </select>
+          </label>
+          <label class="field inline" for="pin-status"><span>状態</span>
+            <select id="pin-status">
+              <option value="未対応">未対応</option>
+              <option value="対応中">対応中</option>
+              <option value="完了">完了</option>
+            </select>
+          </label>
+          <label class="field inline" for="pin-text"><span>内容</span>
+            <textarea id="pin-text" rows="3" autocomplete="off"></textarea>
+          </label>
+          <label class="field inline" for="pin-assignee"><span>担当</span>
+            <input id="pin-assignee" type="text" autocomplete="off" />
+          </label>
+          <label class="field inline" for="pin-date"><span>日付</span>
+            <input id="pin-date" type="date" />
+          </label>
+          <p id="pin-msg" class="error" role="alert"></p>
+          <div class="sheet-actions">
+            <button type="submit" id="pin-ok" class="primary">この位置に置く</button>
+            <button type="button" id="pin-delete" hidden>このピンを消す</button>
+            <button type="button" id="pin-close">閉じる</button>
+          </div>
+        </form>
+      </section>
+      <section id="pin-list-sheet" class="sheet" hidden aria-label="ピン一覧">
+        <div class="sheet-body">
+          <h2>ピン一覧</h2>
+          <div class="menu-row">
+            <label for="pin-filter" class="menu-title">状態で絞る</label>
+            <select id="pin-filter">
+              <option value="all">すべて</option>
+              <option value="未対応">未対応</option>
+              <option value="対応中">対応中</option>
+              <option value="完了">完了</option>
+            </select>
+          </div>
+          <div id="pin-list" class="layer-list"></div>
+          <div class="sheet-actions">
+            <button type="button" id="pin-csv">一覧をCSVで保存</button>
+            <button type="button" id="pin-list-close">閉じる</button>
+          </div>
+        </div>
       </section>
       <section id="backup-sheet" class="sheet" hidden aria-label="バックアップ">
         <div class="sheet-body">

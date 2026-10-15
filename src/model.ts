@@ -156,6 +156,27 @@ export type LevelMark = {
   s: string;
 };
 
+/** ピンの状態 */
+export const PIN_STATUSES = ['未対応', '対応中', '完了'] as const;
+export type PinStatus = (typeof PIN_STATUSES)[number];
+/** ピンの種類 */
+export const PIN_KINDS = ['指摘', '確認', '決定', 'その他'] as const;
+
+/**
+ * ピン（指摘・確認事項を図面の位置に付ける）。no は置いた順の番号（図面上の表示も一覧もこれで揃える）。
+ * date は YYYY-MM-DD。担当は自由入力。
+ */
+export type Pin = {
+  id: string;
+  no: number;
+  p: Vec2;
+  kind: string;
+  status: PinStatus;
+  text: string;
+  assignee: string;
+  date: string;
+};
+
 export type Drawing = {
   version: 1;
   units: 'mm';
@@ -174,6 +195,7 @@ export type Drawing = {
   dims: Dim[];
   notes: Note[];
   levels: LevelMark[];
+  pins: Pin[];
   /** 柱・壁の寄り寸法（通り芯から各面まで）を描くか */
   showOffsetDims: boolean;
   /** 画面で隠している画層（DXF には全部出す） */
@@ -190,6 +212,7 @@ export const LAYER_BEAM = 'BEAM';
 export const LAYER_OPENING = 'OPENING';
 export const LAYER_NOTE = 'NOTE';
 export const LAYER_LEVEL = 'LEVEL';
+export const LAYER_PIN = 'PIN';
 
 export function defaultBeamTypes(): BeamType[] {
   return [
@@ -218,6 +241,7 @@ export function defaultLayers(): Layer[] {
     { name: LAYER_OPENING, color: 2 },
     { name: LAYER_NOTE, color: 7 },
     { name: LAYER_LEVEL, color: 8 },
+    { name: LAYER_PIN, color: 1 },
   ];
 }
 
@@ -238,6 +262,7 @@ export function createDrawing(): Drawing {
     dims: [],
     notes: [],
     levels: [],
+    pins: [],
     showOffsetDims: true,
   };
 }
@@ -260,6 +285,7 @@ export function normalizeDrawing(d: Drawing): Drawing {
   out.dims = out.dims ?? [];
   out.notes = out.notes ?? [];
   out.levels = out.levels ?? [];
+  out.pins = out.pins ?? [];
   out.showOffsetDims = out.showOffsetDims ?? true;
   return out;
 }

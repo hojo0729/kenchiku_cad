@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDrawing } from '../model';
-import { decomposeDim, decomposeNote, dimAt, dimLabel, dimValue, distToSegment, noteBox, noteWidth, decomposeLevel } from './annot';
+import { decomposeDim, decomposeNote, decomposePin, dimAt, dimLabel, dimValue, distToSegment, noteBox, noteWidth, decomposeLevel, pinAt } from './annot';
 
 describe('寸法', () => {
   it('値は a と b の距離（丸めて、3桁ごとにカンマ）', () => {
@@ -51,6 +51,25 @@ describe('寸法の手入力と文字の複数行', () => {
   it('文字の大きさを変えると高さも変わる（用紙 mm × 縮尺）', () => {
     const box = noteBox({ id: 'n', p: { x: 0, y: 0 }, s: 'A', h: 5 }, 50);
     expect(box.h).toBeCloseTo(250);
+  });
+});
+
+describe('ピン', () => {
+  const pin = { id: 'p1', no: 3, p: { x: 1000, y: 2000 }, kind: '指摘', status: '未対応' as const, text: '確認', assignee: '', date: '2026-10-15' };
+
+  it('丸と番号を描く（番号は置いた順の番号）', () => {
+    const prims = decomposePin(pin, 50);
+    const circle = prims.find((p) => p.t === 'circle');
+    const text = prims.find((p) => p.t === 'text');
+    expect(circle && circle.t === 'circle' ? circle.r : 0).toBeCloseTo(200);
+    expect(text && text.t === 'text' ? text.s : '').toBe('3');
+  });
+
+  it('丸の中（と少し外）をタップすると選べる', () => {
+    const d = createDrawing();
+    d.pins.push(pin);
+    expect(pinAt(d, { x: 1010, y: 2000 }, 10)?.id).toBe('p1');
+    expect(pinAt(d, { x: 3000, y: 2000 }, 10)).toBeUndefined();
   });
 });
 

@@ -3,7 +3,8 @@ import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } from './snap';
 import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
-import { dimAt, dimLabel, levelAt, noteAt } from './arch/annot';
+import { dimAt, dimLabel, levelAt, noteAt, pinAt } from './arch/annot';
+import { PIN_KINDS, PIN_STATUSES, type Pin } from './model';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
 import { columnAt, columnRect, intersectionName, nearestIntersection, nextColumnMark } from './arch/column';
 import { detectGrid, toSpans } from './arch/grid-detect';
@@ -33,7 +34,7 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit';
+type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit' | 'pin';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
@@ -338,7 +339,11 @@ function updateStatusText() {
     return;
   }
   if (mode === 'edit') {
-    statusEl.textContent = '編集: 寸法・文字・レベル・開口・柱・壁・梁をタップして数字で直します';
+    statusEl.textContent = '編集: 寸法・文字・レベル・ピン・開口・柱・壁・梁をタップして数字で直します';
+    return;
+  }
+  if (mode === 'pin') {
+    statusEl.textContent = 'ピン: 置く位置をタップ（ピンをタップで編集）';
     return;
   }
   if (mode === 'dim') {
@@ -642,6 +647,10 @@ function handleTap(screen: Vec2, type: string) {
     editTap(screen, type);
     return;
   }
+  if (mode === 'pin') {
+    pinTap(screen, type);
+    return;
+  }
   if (mode === 'note' || mode === 'level') {
     annotTap(mode, screen, type);
     return;
@@ -673,9 +682,16 @@ const actions: Record<string, () => void> = {
   edit() {
     setMode('edit');
   },
+  pin() {
+    setMode('pin');
+  },
   backups() {
     setMenu(false);
     openBackupSheet();
+  },
+  pinList() {
+    setMenu(false);
+    openPinList();
   },
   note() {
     setMode('note');
@@ -758,7 +774,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length && !drawing.dims.length && !drawing.notes.length && !drawing.levels.length && !drawing.openings.length) return;
+    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length && !drawing.dims.length && !drawing.notes.length && !drawing.levels.length && !drawing.pins.length && !drawing.openings.length) return;
     if (!clearArmed) {
       clearArmed = true;
       clearTitle.textContent = 'もう一度押すと全部消します';
@@ -778,6 +794,7 @@ const actions: Record<string, () => void> = {
       drawing.dims = [];
       drawing.notes = [];
       drawing.levels = [];
+      drawing.pins = [];
     });
     syncGridForm();
     pending = null;
@@ -1028,6 +1045,7 @@ const MODE_LABEL: Record<Mode, string> = {
   note: '文字',
   level: 'レベル',
   edit: '編集',
+  pin: 'ピン',
 };
 
 function setPalette(open: boolean) {
@@ -1225,7 +1243,7 @@ document.getElementById('grid-close')!.addEventListener('click', () => showSheet
 // ---------- シート（下から出るパネル） ----------
 
 function showSheet(target: HTMLElement | null) {
-  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet, backupSheet]) el.hidden = el !== target;
+  for (const el of [sheet, colSheet, ulSheet, offSheet, wallPanel.sheet, beamPanel.sheet, opSheet, layerSheet, annotSheet, dimSheet, backupSheet, pinSheet, pinListSheet]) el.hidden = el !== target;
   requestRender();
 }
 
@@ -1880,6 +1898,14 @@ function eraseTap(screen: Vec2, type: string) {
       drawing.openings = drawing.openings.filter((x) => x.id !== op.id);
     });
     flash('開口を消しました（「戻す」で元に戻せます）');
+    return;
+  }
+  const pin = pinAt(drawing, w, r);
+  if (pin) {
+    commit(() => {
+      drawing.pins = drawing.pins.filter((x) => x.id !== pin.id);
+    });
+    flash(`ピン ${pin.no} を消しました（「戻す」で元に戻せます）`);
     return;
   }
   const dim = dimAt(drawing, w, r);
@@ -2558,6 +2584,8 @@ document.getElementById('dim-close')!.addEventListener('click', () => showSheet(
 function editTap(screen: Vec2, type: string) {
   const w = view.toWorld(screen);
   const r = snapRadiusPx(type) / view.scale;
+  const pin = pinAt(drawing, w, r);
+  if (pin) return openPinSheet(pin.id, null);
   const dim = dimAt(drawing, w, r);
   if (dim) return openDimSheet(dim.id);
   const note = noteAt(drawing, w, r);
@@ -2577,6 +2605,170 @@ function editTap(screen: Vec2, type: string) {
   if (beam) return beamPanel.open(beam.id);
   flash('編集できるもの（寸法・文字・レベル・開口・柱・壁・梁）をタップしてください');
 }
+
+// ---------- ピン（指摘・確認事項） ----------
+
+const pinSheet = document.getElementById('pin-sheet') as HTMLElement;
+const pinTitle = document.getElementById('pin-title') as HTMLElement;
+const pinForm = document.getElementById('pin-form') as HTMLFormElement;
+const pinKind = document.getElementById('pin-kind') as HTMLSelectElement;
+const pinStatus = document.getElementById('pin-status') as HTMLSelectElement;
+const pinText = document.getElementById('pin-text') as HTMLTextAreaElement;
+const pinAssignee = document.getElementById('pin-assignee') as HTMLInputElement;
+const pinDate = document.getElementById('pin-date') as HTMLInputElement;
+const pinMsg = document.getElementById('pin-msg') as HTMLElement;
+const pinOk = document.getElementById('pin-ok') as HTMLButtonElement;
+const pinDelete = document.getElementById('pin-delete') as HTMLButtonElement;
+const pinListSheet = document.getElementById('pin-list-sheet') as HTMLElement;
+const pinList = document.getElementById('pin-list') as HTMLElement;
+const pinFilter = document.getElementById('pin-filter') as HTMLSelectElement;
+/** 編集中のピン（null なら新しく置く） */
+let pinEditId: string | null = null;
+/** 新しく置く位置 */
+let pinAtPt: Vec2 | null = null;
+
+function todayText(): string {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+
+function nextPinNo(): number {
+  return Math.max(0, ...drawing.pins.map((p) => p.no)) + 1;
+}
+
+function pinTap(screen: Vec2, type: string) {
+  const w = view.toWorld(screen);
+  const r = snapRadiusPx(type) / view.scale;
+  const hit = pinAt(drawing, w, r);
+  if (hit) {
+    openPinSheet(hit.id, null);
+    return;
+  }
+  updateCursor(screen, type);
+  openPinSheet(null, cursor ? { ...cursor.point } : w);
+}
+
+function openPinSheet(id: string | null, at: Vec2 | null) {
+  pinEditId = id;
+  pinAtPt = at;
+  pinMsg.textContent = '';
+  const pin = id ? drawing.pins.find((x) => x.id === id) : undefined;
+  pinTitle.textContent = pin ? `ピン ${pin.no}` : 'ピン（新しく置く）';
+  pinKind.value = pin?.kind ?? PIN_KINDS[0];
+  pinStatus.value = pin?.status ?? PIN_STATUSES[0];
+  pinText.value = pin?.text ?? '';
+  pinAssignee.value = pin?.assignee ?? '';
+  pinDate.value = pin?.date ?? todayText();
+  pinOk.textContent = pin ? '変更を保存' : 'この位置に置く';
+  pinDelete.hidden = !pin;
+  showSheet(pinSheet);
+}
+
+pinForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = pinText.value.trim();
+  if (!text) {
+    pinMsg.textContent = '内容を入力してください';
+    return;
+  }
+  const data = {
+    kind: pinKind.value,
+    status: pinStatus.value as Pin['status'],
+    text,
+    assignee: pinAssignee.value.trim(),
+    date: pinDate.value.trim() || todayText(),
+  };
+  if (pinEditId) {
+    const id = pinEditId;
+    commit(() => {
+      const it = drawing.pins.find((x) => x.id === id);
+      if (it) Object.assign(it, data);
+    });
+    flash('ピンを保存しました');
+  } else if (pinAtPt) {
+    const at = pinAtPt;
+    const no = nextPinNo();
+    commit(() => {
+      drawing.pins.push({ id: newId(), no, p: at, ...data });
+    });
+    flash(`ピン ${no} を置きました（内容はタップで編集）`);
+  }
+  showSheet(null);
+});
+
+pinDelete.addEventListener('click', () => {
+  const id = pinEditId;
+  if (!id) return;
+  commit(() => {
+    drawing.pins = drawing.pins.filter((x) => x.id !== id);
+  });
+  showSheet(null);
+  flash('ピンを消しました（「戻す」で元に戻せます）');
+});
+
+document.getElementById('pin-close')!.addEventListener('click', () => showSheet(null));
+
+function openPinList() {
+  renderPinList();
+  showSheet(pinListSheet);
+}
+
+function renderPinList() {
+  pinList.replaceChildren();
+  const filter = pinFilter.value;
+  const rows = drawing.pins.filter((p) => filter === 'all' || p.status === filter).sort((a, b) => a.no - b.no);
+  if (drawing.pins.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'まだピンがありません（道具「注記」の「ピン」で置きます）';
+    pinList.append(p);
+    return;
+  }
+  if (rows.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'この状態のピンはありません';
+    pinList.append(p);
+    return;
+  }
+  for (const pin of rows) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'backup-row';
+    const title = document.createElement('span');
+    title.className = 'menu-title';
+    title.textContent = `${pin.no}. ${pin.kind}・${pin.status}${pin.assignee ? `・${pin.assignee}` : ''}`;
+    const sub = document.createElement('span');
+    sub.className = 'menu-sub';
+    sub.textContent = `${pin.date}　${pin.text.split('\n')[0]}`;
+    btn.append(title, sub);
+    btn.addEventListener('click', () => openPinSheet(pin.id, null));
+    pinList.append(btn);
+  }
+}
+
+pinFilter.addEventListener('change', renderPinList);
+
+/** 一覧を CSV で書き出す（Excel で開ける: UTF-8 の BOM 付き） */
+function pinCsv(): Uint8Array {
+  const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
+  const lines = [['No', '種類', '状態', '担当', '日付', 'X(mm)', 'Y(mm)', '内容'].join(',')];
+  for (const p of [...drawing.pins].sort((a, b) => a.no - b.no)) {
+    lines.push([p.no, esc(p.kind), esc(p.status), esc(p.assignee), esc(p.date), Math.round(p.p.x), Math.round(p.p.y), esc(p.text.replace(/\r?\n/g, ' / '))].join(','));
+  }
+  const body = new TextEncoder().encode(lines.join('\r\n'));
+  const bytes = new Uint8Array(body.length + 3);
+  bytes.set([0xef, 0xbb, 0xbf], 0);
+  bytes.set(body, 3);
+  return bytes;
+}
+
+document.getElementById('pin-csv')!.addEventListener('click', () => {
+  void saveFile(`ピン一覧-${timestamp()}.csv`, pinCsv(), 'text/csv');
+});
+
+document.getElementById('pin-list-close')!.addEventListener('click', () => showSheet(null));
 
 // ---------- バックアップから戻す ----------
 
@@ -2662,6 +2854,7 @@ const OWN_LAYER_LABEL: Record<string, string> = {
   OPENING: '開口の表記',
   NOTE: '文字',
   LEVEL: 'レベル',
+  PIN: 'ピン',
   '0': '線',
 };
 
