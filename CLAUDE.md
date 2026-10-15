@@ -171,10 +171,17 @@ npm run build:artifact  # 公開ページ用の1ファイル（artifact/index.ht
   - 制約: 写真は図面データの一部なので、枚数が多いと localStorage（約5MB）とDXFが重くなる。目安は数十枚まで。写真の原本は保存しない
 - [ ] Phase 4: 寸法線ツール（任意の2点、寄り寸法）、文字（DXFの Shift_JIS 対応含む）、画層管理（レイヤーパネル済み）、用紙枠（PDF 出力で済み）
 - [ ] Phase 5: JWW 書き出し（Jw_cad で開いて確認）
-- [ ] Phase 6: DWG（ODA File Converter 手順の整備）、PWA 化
+- [ ] Phase 6: DWG（ODA File Converter 手順の整備）
+- [x] PWA（GitHub Pages）: 公開先は https://hojo0729.github.io/kenchiku_cad/ （`.github/workflows/pages.yml` が main への push で自動公開）。
+  マニフェスト（`public/manifest.webmanifest`）、アイコン、Service Worker（`public/sw.js`、アプリ本体を端末にキャッシュ）でオフラインでも開ける。
+  Service Worker は `import.meta.env.PROD` のときだけ登録（公開ページ・開発では登録しない）。`vite.config.ts` は GitHub Actions のときだけ base を `/kenchiku_cad/` にする。
+  - 初回だけネットにつないで開く → ホーム画面に追加。2回目以降は電波がなくても開ける（ローカルで確認済み）。
+  - 制約: iPhone の Safari は長く使わないサイトの保存データを消すことがある。大事な図面は DXF でも保存する。
+  - 公開設定: リポジトリは private。GitHub Pages を使うには、リポジトリの Settings → Pages → Source を「GitHub Actions」にする必要がある（プランによっては private リポジトリで使えない）。Pages の URL は誰でも開ける（図面データは含まれない）。
 
 ## 次にやること
 
+0. PWA の公開確認: GitHub Pages の設定（Source: GitHub Actions）を有効にし、Actions が通るか、スマホで開いてホーム画面に追加できるかを確認
 1. 設計変更の差分表示（改訂版の DXF と前回の比較）。整合チェックの次の候補
 2. コンクリート数量の概算（階高の入力が要る）
 3. ピンの色を状態で自動に変える（未対応・対応中・完了）。今は手で選ぶ
@@ -213,4 +220,5 @@ npm run build:artifact  # 公開ページ用の1ファイル（artifact/index.ht
 - 2026-10-15: 「ピンレイヤを作って情報を入れたい」→ ピン（番号付きの丸、種類・状態・内容・担当・日付）、ピン一覧（絞り込み・CSV）を追加。番号は置いた順。
 - 2026-10-15: 「ピンの色と大きさ変えられるようにしたい」→ ピンごとに色と大きさを選べるように。色は Prim に個別の色（Pen）として持ち、DXF はエンティティ色で出す。
 - 2026-10-15: 「作らなくて良い」（複数人の同時編集）→ 今の運用のまま。「良い機能は？」→ 整合チェック、差分表示、数量概算を候補に。「お願いします」→ 整合チェックを実装。
+- 2026-10-15: 「オフラインでも動くよね？」→ 今は未対応。「PWA にしたい」→ 公開先を GitHub Pages に決定（リポジトリは private。Pages の設定はご本人が行う）。
 - 2026-10-15: 「どちらも」→ ピンに写真（縮小して図面データに入れる）、ピン一覧から位置へ移動。写真は DXF にも埋め込む（容量が増える）。

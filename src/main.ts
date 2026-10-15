@@ -3071,3 +3071,8 @@ if (import.meta.env.DEV) {
 }
 
 new ResizeObserver(resize).observe(canvas);
+
+// オフライン用の Service Worker（対応していない環境では何もしない）
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
+}
