@@ -3,7 +3,7 @@ import { Viewport } from './viewport';
 import { snapCandidates, snapPoint, type Curve, type Segment, type SnapResult } from './snap';
 import { cornerAngle, curveInfo, direction, formatArea, formatDeg, pickCurve, polygonArea, polygonPerimeter, polylineLength, type MeasureKind } from './measure';
 import { centerPattern, decompose, hiddenPattern, primExtents } from './arch/primitives';
-import { dimAt, dimLabel, levelAt, noteAt, pinAt } from './arch/annot';
+import { dimAt, dimLabel, levelAt, memoAt, noteAt, pinAt } from './arch/annot';
 import { PIN_KINDS, PIN_STATUSES, type Pin, type PinColor, type PinSize } from './model';
 import { checkDrawing } from './arch/check';
 import { formatDim, gridPositions, parseSpans } from './arch/grid';
@@ -35,7 +35,7 @@ let drawing: Drawing = loadDrawing();
 let history: Drawing[] = [];
 let grid = Number(gridSelect.value);
 let pending: Vec2 | null = null;
-type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit' | 'pin';
+type Mode = 'line' | 'column' | 'wall' | 'beam' | 'opening' | 'align' | 'measure' | 'erase' | 'offset' | 'dim' | 'note' | 'level' | 'edit' | 'pin' | 'memo';
 let mode: Mode = 'line';
 /** 直交モード（線を水平・垂直に固定） */
 let ortho = false;
@@ -355,10 +355,12 @@ function updateStatusText() {
         : '寸法線の位置をタップ（2点の外側・内側どちらでも）';
     return;
   }
-  if (mode === 'note' || mode === 'level') {
+  if (mode === 'note' || mode === 'level' || mode === 'memo') {
     statusEl.textContent = mode === 'note'
       ? '文字: 置く位置をタップ（文字をタップで編集）'
-      : 'レベル: 置く位置（▽の先）をタップ（記号をタップで編集）';
+      : mode === 'memo'
+        ? 'メモ: 置く位置をタップ（青い文字。レイヤーで隠せます）'
+        : 'レベル: 置く位置（▽の先）をタップ（記号をタップで編集）';
     return;
   }
   if (mode === 'column') {
@@ -652,7 +654,7 @@ function handleTap(screen: Vec2, type: string) {
     pinTap(screen, type);
     return;
   }
-  if (mode === 'note' || mode === 'level') {
+  if (mode === 'note' || mode === 'level' || mode === 'memo') {
     annotTap(mode, screen, type);
     return;
   }
@@ -703,6 +705,9 @@ const actions: Record<string, () => void> = {
   },
   level() {
     setMode('level');
+  },
+  memo() {
+    setMode('memo');
   },
   column() {
     setMode('column');
@@ -779,7 +784,7 @@ const actions: Record<string, () => void> = {
   },
   clear() {
     // confirm() が使えない環境（公開ページ）もあるので、2回タップで確定する
-    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length && !drawing.dims.length && !drawing.notes.length && !drawing.levels.length && !drawing.pins.length && !drawing.openings.length) return;
+    if (drawing.entities.length === 0 && !drawing.grid && !drawing.columns.length && !drawing.walls.length && !drawing.beams.length && !drawing.dims.length && !drawing.notes.length && !drawing.memos.length && !drawing.levels.length && !drawing.pins.length && !drawing.openings.length) return;
     if (!clearArmed) {
       clearArmed = true;
       clearTitle.textContent = 'もう一度押すと全部消します';
@@ -798,6 +803,7 @@ const actions: Record<string, () => void> = {
       drawing.openings = [];
       drawing.dims = [];
       drawing.notes = [];
+      drawing.memos = [];
       drawing.levels = [];
       drawing.pins = [];
     });
@@ -1037,6 +1043,7 @@ const orthoBtn = document.getElementById('btn-ortho') as HTMLButtonElement;
 const endBtn = document.getElementById('btn-end') as HTMLButtonElement;
 
 const MODE_LABEL: Record<Mode, string> = {
+  memo: 'メモ',
   line: '線',
   column: '柱',
   wall: '壁',
@@ -1929,6 +1936,14 @@ function eraseTap(screen: Vec2, type: string) {
     flash('文字を消しました（「戻す」で元に戻せます）');
     return;
   }
+  const memo = memoAt(drawing, w, r);
+  if (memo) {
+    commit(() => {
+      drawing.memos = drawing.memos.filter((x) => x.id !== memo.id);
+    });
+    flash('メモを消しました（「戻す」で元に戻せます）');
+    return;
+  }
   const level = levelAt(drawing, w, r);
   if (level) {
     commit(() => {
@@ -2399,7 +2414,7 @@ const annotDelete = document.getElementById('annot-delete') as HTMLButtonElement
 
 /** 寸法: 確定した2点（3点目で寸法線の位置を決める） */
 let dimPts: Vec2[] = [];
-type AnnotKind = 'note' | 'level';
+type AnnotKind = 'note' | 'level' | 'memo';
 let annotKind: AnnotKind = 'note';
 /** 編集中の文字・レベル（null なら新しく置く） */
 let annotEditId: string | null = null;
@@ -2442,7 +2457,7 @@ function dimTap(screen: Vec2, type: string) {
 function annotTap(kind: AnnotKind, screen: Vec2, type: string) {
   const w = view.toWorld(screen);
   const r = snapRadiusPx(type) / view.scale;
-  const hit = kind === 'note' ? noteAt(drawing, w, r) : levelAt(drawing, w, r);
+  const hit = kind === 'note' ? noteAt(drawing, w, r) : kind === 'memo' ? memoAt(drawing, w, r) : levelAt(drawing, w, r);
   if (hit) {
     openAnnotSheet(kind, hit.id, null);
     return;
@@ -2456,13 +2471,14 @@ function openAnnotSheet(kind: AnnotKind, id: string | null, at: Vec2 | null) {
   annotEditId = id;
   annotAt = at;
   annotMsg.textContent = '';
-  const item = id ? (kind === 'note' ? drawing.notes.find((x) => x.id === id) : drawing.levels.find((x) => x.id === id)) : undefined;
-  annotTitle.textContent = kind === 'note' ? '文字' : 'レベル';
-  annotText.value = item ? item.s : kind === 'note' ? '' : 'FL±0';
-  annotSizeRow.hidden = kind !== 'note';
+  const list = kind === 'note' ? drawing.notes : kind === 'memo' ? drawing.memos : null;
+  const item = id ? (list ? list.find((x) => x.id === id) : drawing.levels.find((x) => x.id === id)) : undefined;
+  annotTitle.textContent = kind === 'note' ? '文字' : kind === 'memo' ? 'メモ' : 'レベル';
+  annotText.value = item ? item.s : kind === 'level' ? 'FL±0' : '';
+  annotSizeRow.hidden = kind === 'level';
   annotSize.value = String((item as { h?: number } | undefined)?.h ?? 3.5);
-  annotText.placeholder = kind === 'note' ? '例: 注記・仕上げ・ピット' : '例: FL+3.500 / GL±0 / 天端 FL+2.800';
-  annotOk.textContent = item ? '変更を反映' : kind === 'note' ? 'この位置に入れる' : 'この位置に置く';
+  annotText.placeholder = kind === 'level' ? '例: FL+3.500 / GL±0 / 天端 FL+2.800' : kind === 'memo' ? '例: 次回確認・持ち物・要連絡' : '例: 注記・仕上げ・ピット';
+  annotOk.textContent = item ? '変更を反映' : kind === 'level' ? 'この位置に置く' : 'この位置に入れる';
   annotDelete.hidden = !item;
   showSheet(annotSheet);
 }
@@ -2479,8 +2495,8 @@ annotForm.addEventListener('submit', (e) => {
   if (annotEditId) {
     const id = annotEditId;
     commit(() => {
-      if (kind === 'note') {
-        const it = drawing.notes.find((x) => x.id === id);
+      if (kind === 'note' || kind === 'memo') {
+        const it = (kind === 'memo' ? drawing.memos : drawing.notes).find((x) => x.id === id);
         if (it) {
           it.s = s;
           it.h = h;
@@ -2494,10 +2510,10 @@ annotForm.addEventListener('submit', (e) => {
   } else if (annotAt) {
     const at = annotAt;
     commit(() => {
-      if (kind === 'note') drawing.notes.push({ id: newId(), p: at, s, h });
-      else drawing.levels.push({ id: newId(), p: at, s });
+      if (kind === 'level') drawing.levels.push({ id: newId(), p: at, s });
+      else (kind === 'memo' ? drawing.memos : drawing.notes).push({ id: newId(), p: at, s, h });
     });
-    flash(kind === 'note' ? `文字「${s}」を入れました` : `レベル ${s} を置きました`);
+    flash(kind === 'level' ? `レベル ${s} を置きました` : `${kind === 'memo' ? 'メモ' : '文字'}「${s}」を入れました`);
   }
   showSheet(null);
 });
@@ -2507,8 +2523,9 @@ annotDelete.addEventListener('click', () => {
   const id = annotEditId;
   const kind = annotKind;
   commit(() => {
-    if (kind === 'note') drawing.notes = drawing.notes.filter((x) => x.id !== id);
-    else drawing.levels = drawing.levels.filter((x) => x.id !== id);
+    if (kind === 'level') drawing.levels = drawing.levels.filter((x) => x.id !== id);
+    else if (kind === 'memo') drawing.memos = drawing.memos.filter((x) => x.id !== id);
+    else drawing.notes = drawing.notes.filter((x) => x.id !== id);
   });
   showSheet(null);
   flash('削除しました（「戻す」で元に戻せます）');
@@ -2595,6 +2612,8 @@ function editTap(screen: Vec2, type: string) {
   if (dim) return openDimSheet(dim.id);
   const note = noteAt(drawing, w, r);
   if (note) return openAnnotSheet('note', note.id, null);
+  const memo = memoAt(drawing, w, r);
+  if (memo) return openAnnotSheet('memo', memo.id, null);
   const level = levelAt(drawing, w, r);
   if (level) return openAnnotSheet('level', level.id, null);
   const op = openingAt(w, r);
@@ -2978,6 +2997,7 @@ const OWN_LAYER_LABEL: Record<string, string> = {
   OPENING: '開口の表記',
   NOTE: '文字',
   LEVEL: 'レベル',
+  MEMO: 'メモ',
   PIN: 'ピン',
   '0': '線',
 };

@@ -1,6 +1,7 @@
 import type { Dim, Drawing, LevelMark, Note, Pin, Vec2 } from '../model';
-import { LAYER_DIM, LAYER_LEVEL, LAYER_NOTE, LAYER_PIN, PIN_COLORS, PIN_SIZES } from '../model';
+import { LAYER_DIM, LAYER_LEVEL, LAYER_MEMO, LAYER_NOTE, LAYER_PIN, PIN_COLORS, PIN_SIZES } from '../model';
 import { formatDim } from './grid';
+import type { Pen } from './primitives';
 import type { Prim } from './primitives';
 
 /**
@@ -119,12 +120,13 @@ export function noteWidth(s: string, h: number): number {
 }
 
 /** 文字（複数行は上から順に並べる。p は最後の行の下端） */
-export function decomposeNote(note: Note, scale: number): Prim[] {
+export function decomposeNote(note: Note, scale: number, layer: string = LAYER_NOTE, pen?: Pen): Prim[] {
   const lines = note.s.split('\n');
   const h = noteHeight(note) * scale;
   return lines.map((s, i) => ({
     t: 'text' as const,
-    layer: LAYER_NOTE,
+    layer,
+    pen,
     p: { x: note.p.x, y: note.p.y + (lines.length - 1 - i) * h * LINE_GAP },
     h,
     s,
@@ -167,6 +169,9 @@ export function decomposeLevel(lv: LevelMark, scale: number): Prim[] {
 
 /** ピン記号の半径（用紙上 mm）。全体表示でも見えるように大きめ */
 /** ピンの色と半径（用紙上 mm）。未設定は赤・中 */
+/** メモの色（青。注記の黒と区別する） */
+export const MEMO_PEN: Pen = { hex: '#1565c0', aci: 5 };
+
 export function pinStyle(pin: Pin): { pen: { hex: string; aci: number }; r: number } {
   const c = PIN_COLORS.find((x) => x.key === pin.color) ?? PIN_COLORS[0];
   const r = PIN_SIZES[pin.size ?? 'M'].r;
@@ -192,6 +197,7 @@ export function decomposeAnnotations(d: Drawing): Prim[] {
   const out: Prim[] = [];
   for (const dim of d.dims) out.push(...decomposeDim(dim, d.scale));
   for (const n of d.notes) out.push(...decomposeNote(n, d.scale));
+  for (const m of d.memos) out.push(...decomposeNote(m, d.scale, LAYER_MEMO, MEMO_PEN));
   for (const lv of d.levels) out.push(...decomposeLevel(lv, d.scale));
   for (const pin of d.pins) out.push(...decomposePin(pin, d.scale));
   return out;
@@ -215,8 +221,17 @@ export function dimAt(d: Drawing, w: Vec2, r: number): Dim | undefined {
 
 /** タップ位置の文字（左下から右上の外側 r まで） */
 export function noteAt(d: Drawing, w: Vec2, r: number): Note | undefined {
-  return d.notes.find((n) => {
-    const box = noteBox(n, d.scale);
+  return textAt(d.notes, d.scale, w, r);
+}
+
+/** タップ位置のメモ */
+export function memoAt(d: Drawing, w: Vec2, r: number): Note | undefined {
+  return textAt(d.memos, d.scale, w, r);
+}
+
+function textAt(list: readonly Note[], scale: number, w: Vec2, r: number): Note | undefined {
+  return list.find((n) => {
+    const box = noteBox(n, scale);
     return w.x >= n.p.x - r && w.x <= n.p.x + box.w + r && w.y >= n.p.y - r && w.y <= n.p.y + box.h + r;
   });
 }

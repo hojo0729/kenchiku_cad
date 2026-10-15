@@ -216,6 +216,8 @@ export type Drawing = {
   openings: Opening[];
   dims: Dim[];
   notes: Note[];
+  /** メモ（別レイヤー。図面の説明とは分けて、あとで隠せる） */
+  memos: Note[];
   levels: LevelMark[];
   pins: Pin[];
   /** 柱・壁の寄り寸法（通り芯から各面まで）を描くか */
@@ -233,6 +235,8 @@ export const LAYER_WALL = 'WALL';
 export const LAYER_BEAM = 'BEAM';
 export const LAYER_OPENING = 'OPENING';
 export const LAYER_NOTE = 'NOTE';
+/** メモ（青い文字。レイヤーで表示・非表示できる） */
+export const LAYER_MEMO = 'MEMO';
 export const LAYER_LEVEL = 'LEVEL';
 export const LAYER_PIN = 'PIN';
 
@@ -262,6 +266,7 @@ export function defaultLayers(): Layer[] {
     { name: LAYER_BEAM, color: 6, linetype: 'HIDDEN' },
     { name: LAYER_OPENING, color: 2 },
     { name: LAYER_NOTE, color: 7 },
+    { name: LAYER_MEMO, color: 5 },
     { name: LAYER_LEVEL, color: 8 },
     { name: LAYER_PIN, color: 1 },
   ];
@@ -283,6 +288,7 @@ export function createDrawing(): Drawing {
     openings: [],
     dims: [],
     notes: [],
+    memos: [],
     levels: [],
     pins: [],
     showOffsetDims: true,
@@ -306,6 +312,7 @@ export function normalizeDrawing(d: Drawing): Drawing {
   out.openings = out.openings ?? [];
   out.dims = out.dims ?? [];
   out.notes = out.notes ?? [];
+  out.memos = out.memos ?? [];
   out.levels = out.levels ?? [];
   out.pins = out.pins ?? [];
   out.showOffsetDims = out.showOffsetDims ?? true;

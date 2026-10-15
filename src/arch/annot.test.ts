@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDrawing } from '../model';
-import { decomposeDim, decomposeNote, decomposePin, dimAt, dimLabel, dimValue, distToSegment, noteBox, noteWidth, decomposeLevel, pinAt } from './annot';
+import { decomposeAnnotations, decomposeDim, decomposeNote, decomposePin, dimAt, dimLabel, dimValue, distToSegment, memoAt, noteAt, noteBox, noteWidth, decomposeLevel, pinAt } from './annot';
 
 describe('寸法', () => {
   it('値は a と b の距離（丸めて、3桁ごとにカンマ）', () => {
@@ -110,5 +110,28 @@ describe('ピンの色と大きさ', () => {
     d.pins.push({ ...base, size: 'L' });
     // 中心から 250mm 離れた点（L の半径 300mm 以内、M の 200mm の外）
     expect(pinAt(d, { x: 250000 / 1000, y: 0 }, 0)).toBeDefined();
+  });
+});
+
+describe('メモ（別レイヤー）', () => {
+  it('メモは MEMO 画層に青で出る。注記は NOTE のまま', () => {
+    const d = createDrawing();
+    d.scale = 50;
+    d.memos.push({ id: 'm1', p: { x: 1000, y: 2000 }, s: '次回確認' });
+    d.notes.push({ id: 'n1', p: { x: 0, y: 0 }, s: '注記' });
+    const prims = decomposeAnnotations(d);
+    const memo = prims.find((p) => p.t === 'text' && p.s === '次回確認');
+    const note = prims.find((p) => p.t === 'text' && p.s === '注記');
+    expect(memo && memo.layer).toBe('MEMO');
+    expect(memo && memo.t === 'text' && memo.pen?.hex).toBe('#1565c0');
+    expect(note && note.layer).toBe('NOTE');
+  });
+
+  it('タップ位置のメモを見つける（注記は見つけない）', () => {
+    const d = createDrawing();
+    d.scale = 50;
+    d.memos.push({ id: 'm1', p: { x: 1000, y: 2000 }, s: 'メモ' });
+    expect(memoAt(d, { x: 1005, y: 2005 }, 0)?.id).toBe('m1');
+    expect(noteAt(d, { x: 1005, y: 2005 }, 0)).toBeUndefined();
   });
 });
